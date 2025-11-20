@@ -1,0 +1,19 @@
+[project]
+name = "example_nodes_template"
+version = "0.1.0"
+description = "Template for Users to create Custom Libraries and Nodes"
+authors = [
+    {name = "Your Name",email = "you@example.com"}
+]
+readme = "README.md"
+requires-python = "~=3.12"
+dependencies = [
+    "griptape-nodes",
+]
+
+[tool.uv.sources]
+griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
