@@ -9,6 +9,7 @@ from PIL import Image
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
+from griptape_nodes.traits.slider import Slider
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
 
@@ -47,30 +48,12 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         self.add_parameter(
             Parameter(
-                name="model_checkpoint",
-                input_types=["str"],
-                type="str",
-                default_value="sam3_tiny",
-                tooltip="Model checkpoint to use (sam3_tiny, sam3_small, sam3_base, sam3_large)",
-                traits={
-                    "options": [
-                        {"label": "Tiny", "value": "sam3_tiny"},
-                        {"label": "Small", "value": "sam3_small"},
-                        {"label": "Base", "value": "sam3_base"},
-                        {"label": "Large", "value": "sam3_large"},
-                    ]
-                },
-            )
-        )
-
-        self.add_parameter(
-            Parameter(
                 name="max_masks",
                 input_types=["int"],
                 type="int",
                 default_value=10,
                 tooltip="Maximum number of masks to return",
-                traits={"min": 1, "max": 100},
+                traits={Slider(min_val=1, max_val=100)},
             )
         )
 
@@ -81,7 +64,7 @@ class Sam3SegmentImage(SuccessFailureNode):
                 type="float",
                 default_value=0.5,
                 tooltip="Minimum confidence score for masks (0.0 to 1.0)",
-                traits={"min": 0.0, "max": 1.0, "step": 0.05},
+                traits={Slider(min_val=0.0, max_val=1.0)},
             )
         )
 
@@ -132,7 +115,6 @@ class Sam3SegmentImage(SuccessFailureNode):
         # Model caching
         self._model = None
         self._processor = None
-        self._current_checkpoint = None
 
     def validate_before_node_run(self) -> tuple[bool, str | None]:
         """Validate inputs before running the node"""
@@ -152,7 +134,6 @@ class Sam3SegmentImage(SuccessFailureNode):
             # Get input parameters
             input_image_artifact = self.get_parameter_value("input_image")
             text_prompt = self.get_parameter_value("text_prompt")
-            model_checkpoint = self.get_parameter_value("model_checkpoint")
             max_masks = self.get_parameter_value("max_masks")
             score_threshold = self.get_parameter_value("score_threshold")
 
@@ -162,9 +143,8 @@ class Sam3SegmentImage(SuccessFailureNode):
                 self._handle_failure_exception(ValueError(error_details))
                 return
 
-            self.append_value_to_parameter("logs", f"Starting SAM3 segmentation...\n")
+            self.append_value_to_parameter("logs", "Starting SAM3 segmentation...\n")
             self.append_value_to_parameter("logs", f"Text prompt: {text_prompt}\n")
-            self.append_value_to_parameter("logs", f"Model: {model_checkpoint}\n")
 
             # Convert image artifact to PIL Image
             input_image = self._artifact_to_pil(input_image_artifact)
@@ -172,7 +152,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             self.append_value_to_parameter("logs", f"Image size: {input_image.size}\n")
 
             # Load or initialize model
-            self._load_model(model_checkpoint)
+            self._load_model()
 
             # Set the image in the processor
             self.append_value_to_parameter("logs", "Processing image...\n")
@@ -225,7 +205,6 @@ class Sam3SegmentImage(SuccessFailureNode):
             success_details = (
                 f"Segmentation completed successfully\n"
                 f"Text prompt: {text_prompt}\n"
-                f"Model: {model_checkpoint}\n"
                 f"Masks found: {num_found}\n"
                 f"Score threshold: {score_threshold}"
             )
@@ -240,30 +219,28 @@ class Sam3SegmentImage(SuccessFailureNode):
             failure_details = (
                 f"Segmentation failed\n"
                 f"Text prompt: {text_prompt if 'text_prompt' in locals() else 'N/A'}\n"
-                f"Model: {model_checkpoint if 'model_checkpoint' in locals() else 'N/A'}\n"
                 f"Error: {str(e)}\n"
                 f"Exception type: {type(e).__name__}"
             )
             self._set_status_results(was_successful=False, result_details=f"FAILURE: {failure_details}")
             self._handle_failure_exception(e)
 
-    def _load_model(self, model_checkpoint: str) -> None:
+    def _load_model(self) -> None:
         """Load or cache the SAM3 model"""
-        if self._model is not None and self._current_checkpoint == model_checkpoint:
+        if self._model is not None:
             self.append_value_to_parameter("logs", "Using cached model\n")
             return
 
-        self.append_value_to_parameter("logs", f"Loading SAM3 model: {model_checkpoint}...\n")
+        self.append_value_to_parameter("logs", "Loading SAM3 model from Hugging Face...\n")
 
         try:
             # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
             from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
-            # Load the model
-            self._model = build_sam3_image_model(checkpoint=model_checkpoint)
+            # Load the model (downloads from Hugging Face automatically)
+            self._model = build_sam3_image_model()
             self._processor = Sam3Processor(self._model)
-            self._current_checkpoint = model_checkpoint
 
             self.append_value_to_parameter("logs", "Model loaded successfully\n")
 

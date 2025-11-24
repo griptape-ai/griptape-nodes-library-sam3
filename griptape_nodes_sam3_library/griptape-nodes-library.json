@@ -22,7 +22,7 @@
         "color": "border-purple-500",
         "title": "SAM3",
         "description": "SAM3 image segmentation nodes",
-        "icon": "scan"
+        "icon": "layers"
       }
     }
   ],
