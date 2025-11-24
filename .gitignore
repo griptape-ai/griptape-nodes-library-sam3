@@ -1,4 +1,4 @@
 .env
 .venv
-example_nodes_template/__pycache__/
+griptape_nodes_sam3_library\__pycache__
 .claude

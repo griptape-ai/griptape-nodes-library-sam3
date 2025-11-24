@@ -1,14 +1,18 @@
 import logging
+import uuid
 from io import BytesIO
 from typing import Any
 
 import numpy as np
 import requests
-from griptape.artifacts import ImageArtifact, ImageUrlArtifact, ListArtifact
+from griptape.artifacts import ImageArtifact, ImageUrlArtifact
 from PIL import Image
+
+from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
+from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.traits.slider import Slider
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
@@ -25,6 +29,14 @@ class Sam3SegmentImage(SuccessFailureNode):
 
     def __init__(self, name: str, metadata: dict[Any, Any] | None = None) -> None:
         super().__init__(name, metadata)
+
+        # Model selection parameter (triggers model manager if not downloaded)
+        self._model_repo_parameter = HuggingFaceRepoParameter(
+            self,
+            repo_ids=["facebook/sam3"],
+            parameter_name="model",
+        )
+        self._model_repo_parameter.add_input_parameters()
 
         # Input parameters
         self.add_parameter(
@@ -72,8 +84,8 @@ class Sam3SegmentImage(SuccessFailureNode):
         self.add_parameter(
             Parameter(
                 name="output_masks",
-                output_type="ListArtifact",
-                tooltip="List of segmentation masks as images",
+                output_type="list",
+                tooltip="List of segmentation masks as ImageUrlArtifacts",
                 allowed_modes={ParameterMode.OUTPUT},
             )
         )
@@ -81,7 +93,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         self.add_parameter(
             Parameter(
                 name="output_composite",
-                output_type="ImageArtifact",
+                output_type="ImageUrlArtifact",
                 tooltip="Composite image with all masks overlaid",
                 allowed_modes={ParameterMode.OUTPUT},
             )
@@ -116,14 +128,20 @@ class Sam3SegmentImage(SuccessFailureNode):
         self._model = None
         self._processor = None
 
-    def validate_before_node_run(self) -> tuple[bool, str | None]:
+    def validate_before_node_run(self) -> list[Exception] | None:
         """Validate inputs before running the node"""
+        errors: list[Exception] = []
+
+        # Validate model is available
+        model_errors = self._model_repo_parameter.validate_before_node_run()
+        if model_errors:
+            errors.extend(model_errors)
+
         text_prompt = self.get_parameter_value("text_prompt")
-
         if not text_prompt or text_prompt.strip() == "":
-            return False, "Text prompt cannot be empty. Please provide a description of what to segment."
+            errors.append(ValueError("Text prompt cannot be empty. Please provide a description of what to segment."))
 
-        return True, None
+        return errors if errors else None
 
     def process(self) -> None:
         """Main processing logic"""
@@ -183,21 +201,22 @@ class Sam3SegmentImage(SuccessFailureNode):
                 mask_img = self._mask_to_image(mask)
                 mask_artifact = self._pil_to_artifact(mask_img)
                 mask_artifacts.append(mask_artifact)
-                self.append_value_to_parameter("logs", f"Mask {i+1}: score={filtered_scores[i]:.3f}\n")
+                score_val = filtered_scores[i].item() if hasattr(filtered_scores[i], 'item') else float(filtered_scores[i])
+                self.append_value_to_parameter("logs", f"Mask {i+1}: score={score_val:.3f}\n")
 
             # Create composite image with all masks overlaid
             composite_image = self._create_composite(input_image, filtered_masks)
             composite_artifact = self._pil_to_artifact(composite_image)
 
             # Set output parameters
-            self.set_parameter_value("output_masks", ListArtifact(mask_artifacts))
+            self.set_parameter_value("output_masks", mask_artifacts)
             self.set_parameter_value("output_composite", composite_artifact)
             self.set_parameter_value("num_masks_found", num_found)
 
             self.append_value_to_parameter("logs", "Segmentation complete!\n")
 
             # Publish outputs
-            self.parameter_output_values["output_masks"] = ListArtifact(mask_artifacts)
+            self.parameter_output_values["output_masks"] = mask_artifacts
             self.parameter_output_values["output_composite"] = composite_artifact
             self.parameter_output_values["num_masks_found"] = num_found
 
@@ -235,12 +254,15 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         try:
             # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
-            from sam3.model_builder import build_sam3_image_model
+            from sam3 import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
             # Load the model (downloads from Hugging Face automatically)
             self._model = build_sam3_image_model()
-            self._processor = Sam3Processor(self._model)
+
+            # Get score threshold from parameter
+            score_threshold = self.get_parameter_value("score_threshold")
+            self._processor = Sam3Processor(self._model, confidence_threshold=score_threshold)
 
             self.append_value_to_parameter("logs", "Model loaded successfully\n")
 
@@ -272,18 +294,24 @@ class Sam3SegmentImage(SuccessFailureNode):
         else:
             raise ValueError(f"Unsupported artifact type: {type(artifact)}")
 
-    def _pil_to_artifact(self, image: Image.Image) -> ImageArtifact:
-        """Convert PIL Image to ImageArtifact"""
+    def _pil_to_artifact(self, image: Image.Image) -> ImageUrlArtifact:
+        """Convert PIL Image to ImageUrlArtifact"""
         buffer = BytesIO()
         image.save(buffer, format="PNG")
-        buffer.seek(0)
-        return ImageArtifact(value=buffer.read(), name="segmentation_result.png")
+        image_bytes = buffer.getvalue()
+        filename = f"{uuid.uuid4()}.png"
+        url = GriptapeNodes.StaticFilesManager().save_static_file(image_bytes, filename)
+        return ImageUrlArtifact(url)
 
     def _mask_to_image(self, mask: Any) -> Image.Image:
         """Convert mask array to PIL Image"""
         # Convert mask to numpy array if it isn't already
         if not isinstance(mask, np.ndarray):
-            mask = np.array(mask)
+            # Handle PyTorch tensors (may be on GPU)
+            if hasattr(mask, 'cpu'):
+                mask = mask.cpu().numpy()
+            else:
+                mask = np.array(mask)
 
         # Ensure mask is 2D
         if mask.ndim > 2:
@@ -314,7 +342,11 @@ class Sam3SegmentImage(SuccessFailureNode):
         for i, mask in enumerate(masks):
             # Convert mask to numpy array
             if not isinstance(mask, np.ndarray):
-                mask = np.array(mask)
+                # Handle PyTorch tensors (may be on GPU)
+                if hasattr(mask, 'cpu'):
+                    mask = mask.cpu().numpy()
+                else:
+                    mask = np.array(mask)
 
             if mask.ndim > 2:
                 mask = mask.squeeze()

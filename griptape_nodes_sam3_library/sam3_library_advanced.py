@@ -8,13 +8,14 @@ from pathlib import Path
 
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
+from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sam3_library")
 
 # Version constants for SAM3 dependencies
-PYTORCH_VERSION = "2.7.0"
-CUDA_VERSION = "12.6"
+PYTORCH_VERSION = "2.8.0"
+CUDA_VERSION = "12.8"
 
 
 class Sam3LibraryAdvanced(AdvancedNodeLibrary):
@@ -42,6 +43,21 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         """Called after all nodes have been loaded from the library."""
         msg = f"Finished loading nodes for '{library_data.name}' library"
         logger.info(msg)
+
+        # Configure PyTorch for optimal GPU performance
+        self._configure_pytorch_settings()
+
+    def _configure_pytorch_settings(self) -> None:
+        """Configure PyTorch TF32 settings for Ampere+ GPUs."""
+        try:
+            import torch
+
+            # Enable TF32 for Ampere+ GPUs (significant speedup with minimal precision loss)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            logger.info("PyTorch TF32 settings enabled for GPU acceleration")
+        except ImportError:
+            logger.warning("PyTorch not available, skipping TF32 configuration")
 
     def _check_dependencies_installed(self) -> bool:
         """Check if all required dependencies are properly installed.
@@ -96,7 +112,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
 
             # Step 1: Install PyTorch with CUDA support
             cuda_version_short = CUDA_VERSION.replace(".", "")  # "12.6" -> "126"
-            logger.info(f"Step 1/3: Installing PyTorch {PYTORCH_VERSION} with CUDA {CUDA_VERSION} support...")
+            logger.info(f"Step 1/4: Installing PyTorch {PYTORCH_VERSION} with CUDA {CUDA_VERSION} support...")
             self._run_pip_install([
                 f"torch=={PYTORCH_VERSION}",
                 "torchvision",
@@ -106,13 +122,23 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             ])
             logger.info("PyTorch installation complete")
 
-            # Step 2: Initialize SAM3 submodule
-            logger.info("Step 2/3: Initializing SAM3 submodule...")
+            # Step 2: Install triton (platform-specific)
+            logger.info("Step 2/4: Installing triton...")
+            if GriptapeNodes.OSManager().is_windows():
+                logger.info("Windows detected, installing triton-windows...")
+                self._run_pip_install(["triton-windows"])
+            else:
+                logger.info("Linux detected, installing triton...")
+                self._run_pip_install(["triton"])
+            logger.info("Triton installation complete")
+
+            # Step 3: Initialize SAM3 submodule
+            logger.info("Step 3/4: Initializing SAM3 submodule...")
             sam3_submodule_dir = self._init_sam3_submodule()
             logger.info(f"SAM3 submodule initialized at: {sam3_submodule_dir}")
 
-            # Step 3: Install SAM3 in editable mode
-            logger.info("Step 3/3: Installing SAM3 package...")
+            # Step 4: Install SAM3 in editable mode
+            logger.info("Step 4/4: Installing SAM3 package...")
             self._install_sam3_package(sam3_submodule_dir)
 
             logger.info("SAM3 installation completed successfully!")
@@ -183,8 +209,16 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         return sam3_submodule_dir
 
     def _install_sam3_package(self, sam3_dir: Path) -> None:
-        """Install the SAM3 package from the submodule."""
-        cmd = [sys.executable, "-m", "pip", "install", str(sam3_dir)]
+        """Install the SAM3 package from the submodule.
+
+        NOTE: Uses editable mode (-e) because SAM3's pyproject.toml has a packaging bug
+        that only includes sam3 and sam3.model, but not sam3.sam and other required
+        subpackages. Editable mode symlinks to the source and includes all packages.
+
+        Also installs with [notebooks] extras which includes einops and other
+        dependencies not listed in the base requirements.
+        """
+        cmd = [sys.executable, "-m", "pip", "install", "-e", f"{sam3_dir}[notebooks]"]
         logger.info(f"Running: {' '.join(cmd)}")
 
         result = subprocess.run(
