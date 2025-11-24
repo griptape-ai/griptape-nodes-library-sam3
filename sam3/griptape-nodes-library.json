@@ -1,0 +1,34 @@
+{
+    "name": "SAM3 Library",
+    "library_schema_version": "0.1.0",
+    "metadata": {
+        "author": "griptape-ai",
+        "description": "SAM3 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image segmentation with text prompts",
+        "library_version": "0.1.0",
+        "engine_version": "0.1.0",
+        "tags": [
+            "Griptape",
+            "AI",
+            "SAM3",
+            "Image Segmentation",
+            "Computer Vision",
+            "Meta"
+        ]
+    },
+    "categories": [
+        {
+            "name": "Image",
+            "description": "Image processing and segmentation nodes"
+        }
+    ],
+    "nodes": [
+        {
+            "name": "SAM3 Segment Image",
+            "class_name": "Sam3SegmentImage",
+            "module_path": "sam3.sam3_segment_image",
+            "description": "Segment objects in images using SAM3 with text prompts",
+            "category": "Image",
+            "tags": ["segmentation", "sam3", "image", "ai", "vision"]
+        }
+    ]
+}
