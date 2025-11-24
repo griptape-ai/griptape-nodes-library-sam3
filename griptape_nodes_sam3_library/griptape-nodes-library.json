@@ -25,7 +25,7 @@
         {
             "name": "SAM3 Segment Image",
             "class_name": "Sam3SegmentImage",
-            "module_path": "sam3.sam3_segment_image",
+            "module_path": "griptape_nodes_sam3_library.sam3_segment_image",
             "description": "Segment objects in images using SAM3 with text prompts",
             "category": "Image",
             "tags": ["segmentation", "sam3", "image", "ai", "vision"]

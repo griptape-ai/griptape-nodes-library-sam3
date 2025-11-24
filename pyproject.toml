@@ -1,7 +1,7 @@
 [project]
-name = "sam3"
+name = "griptape-nodes-sam3-library"
 version = "0.1.0"
-description = "Griptape Node Library for sam3"
+description = "Griptape Node Library for SAM3 (Segment Anything with Concepts)"
 authors = [
     {name = "Your Name",email = "you@example.com"}
 ]
@@ -9,8 +9,9 @@ readme = "README.md"
 requires-python = "~=3.12"
 dependencies = [
     "griptape-nodes",
-    "sam3",
 ]
+# Note: sam3, torch, torchvision, torchaudio are installed by sam3_library_advanced.py
+# at runtime via the submodule, not as pip dependencies
 
 [tool.uv.sources]
 griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
