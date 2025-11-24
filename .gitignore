@@ -1,3 +1,4 @@
 .env
 .venv
 example_nodes_template/__pycache__/
+.claude

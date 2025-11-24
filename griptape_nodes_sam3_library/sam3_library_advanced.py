@@ -91,7 +91,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         """Install SAM3 and required dependencies."""
         try:
             logger.info("=" * 80)
-            logger.info("Installing SAM3 dependencies...")
+            logger.info("Installing SAM3 Library Dependencies...")
             logger.info("=" * 80)
 
             # Step 1: Install PyTorch with CUDA support
@@ -114,15 +114,13 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             # Step 3: Install SAM3 in editable mode
             logger.info("Step 3/3: Installing SAM3 package...")
             self._install_sam3_package(sam3_submodule_dir)
-            logger.info("SAM3 installation complete")
 
-            logger.info("=" * 80)
             logger.info("SAM3 installation completed successfully!")
             logger.info("=" * 80)
             logger.warning("IMPORTANT: Before using SAM3, you must:")
             logger.warning("  1. Request access to SAM3 checkpoints on Hugging Face")
-            logger.warning("  2. Generate an access token")
-            logger.warning("  3. Run: huggingface-cli login")
+            logger.warning("  2. Set HF_TOKEN in the Model Management settings:")
+            logger.warning("     https://app.nodes.griptape.ai/#model-management")
             logger.info("=" * 80)
 
         except Exception as e:

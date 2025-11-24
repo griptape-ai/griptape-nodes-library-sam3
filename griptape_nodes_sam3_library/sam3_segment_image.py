@@ -6,11 +6,11 @@ import numpy as np
 import requests
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact, ListArtifact
 from PIL import Image
-from sam3.model_builder import build_sam3_image_model
-from sam3.model.sam3_image_processor import Sam3Processor
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
+
+# SAM3 imports are done lazily in _load_model() to allow installation first
 
 logger = logging.getLogger("sam3_nodes_library")
 
@@ -256,6 +256,10 @@ class Sam3SegmentImage(SuccessFailureNode):
         self.append_value_to_parameter("logs", f"Loading SAM3 model: {model_checkpoint}...\n")
 
         try:
+            # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
+            from sam3.model_builder import build_sam3_image_model
+            from sam3.model.sam3_image_processor import Sam3Processor
+
             # Load the model
             self._model = build_sam3_image_model(checkpoint=model_checkpoint)
             self._processor = Sam3Processor(self._model)
@@ -264,7 +268,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             self.append_value_to_parameter("logs", "Model loaded successfully\n")
 
         except ImportError as e:
-            error_msg = "SAM3 library not installed. Please install it with: pip install sam3"
+            error_msg = "SAM3 library not installed. Please check the installation logs."
             self.append_value_to_parameter("logs", f"{error_msg}\n")
             raise ImportError(error_msg) from e
         except Exception as e:
