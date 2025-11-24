@@ -3,6 +3,7 @@
 import logging
 import subprocess
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
@@ -53,33 +54,36 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         """
         try:
             # Check PyTorch version
-            import torch
-            if torch.__version__ != PYTORCH_VERSION:
-                logger.info(f"PyTorch version mismatch: expected {PYTORCH_VERSION}, got {torch.__version__}")
+            torch_version = version("torch")
+            if torch_version != PYTORCH_VERSION:
+                logger.info(f"PyTorch version mismatch: expected {PYTORCH_VERSION}, got {torch_version}")
                 return False
+
+            # Check CUDA support (need to import torch for runtime check)
+            import torch
             if not torch.cuda.is_available():
                 logger.info("PyTorch CUDA support not available")
                 return False
             if not torch.version.cuda.startswith(CUDA_VERSION):
-                logger.info(f"CUDA version mismatch: expected {CUDA_VERSION}.x, got {torch.version.cuda}")
+                logger.info(f"CUDA version mismatch: expected {CUDA_VERSION}, got {torch.version.cuda}")
                 return False
-            logger.info(f"✓ PyTorch {torch.__version__} with CUDA {torch.version.cuda}")
+            logger.info(f"✓ torch {torch_version} with CUDA {torch.version.cuda}")
 
             # Check torchvision
-            import torchvision
-            logger.info(f"✓ torchvision {torchvision.__version__}")
+            torchvision_version = version("torchvision")
+            logger.info(f"✓ torchvision {torchvision_version}")
 
             # Check torchaudio
-            import torchaudio
-            logger.info(f"✓ torchaudio {torchaudio.__version__}")
+            torchaudio_version = version("torchaudio")
+            logger.info(f"✓ torchaudio {torchaudio_version}")
 
-            # Check SAM3 package (import something specific to real SAM3, not this library)
-            from sam3.model_builder import build_sam3_image_model
-            logger.info("✓ SAM3 package")
+            # Check SAM3 package
+            sam3_version = version("sam3")
+            logger.info(f"✓ sam3 {sam3_version}")
 
             return True
 
-        except ImportError as e:
+        except PackageNotFoundError as e:
             logger.info(f"Dependency check failed: {e}")
             return False
 
@@ -181,8 +185,8 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         return sam3_submodule_dir
 
     def _install_sam3_package(self, sam3_dir: Path) -> None:
-        """Install the SAM3 package in editable mode."""
-        cmd = [sys.executable, "-m", "pip", "install", "-e", str(sam3_dir)]
+        """Install the SAM3 package from the submodule."""
+        cmd = [sys.executable, "-m", "pip", "install", str(sam3_dir)]
         logger.info(f"Running: {' '.join(cmd)}")
 
         result = subprocess.run(
@@ -195,4 +199,4 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         if result.stdout:
             logger.debug(result.stdout)
         if result.stderr:
-            logger.debug(result.stderr)
+            logger.error(result.stderr)
