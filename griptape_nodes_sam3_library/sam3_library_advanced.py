@@ -2,7 +2,6 @@
 
 import logging
 import subprocess
-import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -12,10 +11,6 @@ from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sam3_library")
-
-# Version constants for SAM3 dependencies
-PYTORCH_VERSION = "2.8.0"
-CUDA_VERSION = "12.8"
 
 
 class Sam3LibraryAdvanced(AdvancedNodeLibrary):
@@ -47,6 +42,32 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         # Configure PyTorch for optimal GPU performance
         self._configure_pytorch_settings()
 
+    def _get_library_root(self) -> Path:
+        """Get the library root directory (where .venv lives)."""
+        return Path(__file__).parent
+
+    def _get_venv_python_path(self) -> Path:
+        """Get the Python executable path from the library's venv.
+
+        Returns the path to the venv's Python executable, which differs between
+        Windows (Scripts/python.exe) and Unix (bin/python).
+        """
+        venv_path = self._get_library_root() / ".venv"
+
+        if GriptapeNodes.OSManager().is_windows():
+            venv_python_path = venv_path / "Scripts" / "python.exe"
+        else:
+            venv_python_path = venv_path / "bin" / "python"
+
+        if not venv_python_path.exists():
+            raise RuntimeError(
+                f"Library venv Python not found at {venv_python_path}. "
+                "The library venv must be initialized before loading."
+            )
+
+        logger.debug(f"Python executable found at: {venv_python_path}")
+        return venv_python_path
+
     def _configure_pytorch_settings(self) -> None:
         """Configure PyTorch TF32 settings for Ampere+ GPUs."""
         try:
@@ -60,47 +81,23 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             logger.warning("PyTorch not available, skipping TF32 configuration")
 
     def _check_dependencies_installed(self) -> bool:
-        """Check if all required dependencies are properly installed.
-
-        Verifies exactly what this script installs:
-        - torch=={PYTORCH_VERSION} with CUDA {CUDA_VERSION}
-        - torchvision
-        - torchaudio
-        - sam3 package (from submodule)
-        """
+        """Check if sam3 is installed. Debug log found versions."""
         try:
-            # Check PyTorch version
-            torch_version = version("torch")
-            if torch_version != PYTORCH_VERSION:
-                logger.info(f"PyTorch version mismatch: expected {PYTORCH_VERSION}, got {torch_version}")
-                return False
-
-            # Check CUDA support (need to import torch for runtime check)
-            import torch
-            if not torch.cuda.is_available():
-                logger.info("PyTorch CUDA support not available")
-                return False
-            if not torch.version.cuda.startswith(CUDA_VERSION):
-                logger.info(f"CUDA version mismatch: expected {CUDA_VERSION}, got {torch.version.cuda}")
-                return False
-            logger.info(f"✓ torch {torch_version} with CUDA {torch.version.cuda}")
-
-            # Check torchvision
-            torchvision_version = version("torchvision")
-            logger.info(f"✓ torchvision {torchvision_version}")
-
-            # Check torchaudio
-            torchaudio_version = version("torchaudio")
-            logger.info(f"✓ torchaudio {torchaudio_version}")
-
-            # Check SAM3 package
+            # Check SAM3 package (the main dependency we install)
             sam3_version = version("sam3")
-            logger.info(f"✓ sam3 {sam3_version}")
+            logger.debug(f"Found sam3 {sam3_version}")
+
+            # Log other dependencies for debugging
+            try:
+                import torch
+                logger.debug(f"Found torch {torch.__version__}, CUDA: {torch.version.cuda if torch.cuda.is_available() else 'N/A'}")
+            except ImportError:
+                logger.debug("torch not found")
 
             return True
 
-        except PackageNotFoundError as e:
-            logger.info(f"Dependency check failed: {e}")
+        except PackageNotFoundError:
+            logger.debug("sam3 not found")
             return False
 
     def _install_sam3_dependencies(self) -> None:
@@ -110,35 +107,22 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             logger.info("Installing SAM3 Library Dependencies...")
             logger.info("=" * 80)
 
-            # Step 1: Install PyTorch with CUDA support
-            cuda_version_short = CUDA_VERSION.replace(".", "")  # "12.6" -> "126"
-            logger.info(f"Step 1/4: Installing PyTorch {PYTORCH_VERSION} with CUDA {CUDA_VERSION} support...")
-            self._run_pip_install([
-                f"torch=={PYTORCH_VERSION}",
-                "torchvision",
-                "torchaudio",
-                "--index-url",
-                f"https://download.pytorch.org/whl/cu{cuda_version_short}"
-            ])
-            logger.info("PyTorch installation complete")
+            # Ensure pip is available in the venv
+            self._ensure_pip_installed()
 
-            # Step 2: Install triton (platform-specific)
-            logger.info("Step 2/4: Installing triton...")
+            # Step 1/3: Install triton (platform-specific)
+            logger.info("Step 1/3: Installing triton...")
             if GriptapeNodes.OSManager().is_windows():
-                logger.info("Windows detected, installing triton-windows...")
                 self._run_pip_install(["triton-windows"])
             else:
-                logger.info("Linux detected, installing triton...")
                 self._run_pip_install(["triton"])
-            logger.info("Triton installation complete")
 
-            # Step 3: Initialize SAM3 submodule
-            logger.info("Step 3/4: Initializing SAM3 submodule...")
+            # Step 2/3: Initialize SAM3 submodule
+            logger.info("Step 2/3: Initializing SAM3 submodule...")
             sam3_submodule_dir = self._init_sam3_submodule()
-            logger.info(f"SAM3 submodule initialized at: {sam3_submodule_dir}")
 
-            # Step 4: Install SAM3 in editable mode
-            logger.info("Step 4/4: Installing SAM3 package...")
+            # Step 3/3: Install SAM3 in editable mode
+            logger.info("Step 3/3: Installing SAM3 package...")
             self._install_sam3_package(sam3_submodule_dir)
 
             logger.info("SAM3 installation completed successfully!")
@@ -154,51 +138,75 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from e
 
-    def _run_pip_install(self, packages: list[str]) -> None:
-        """Run pip install with the given packages."""
-        cmd = [sys.executable, "-m", "pip", "install"] + packages
-        logger.info(f"Running: {' '.join(cmd)}")
+    def _ensure_pip_installed(self) -> None:
+        """Ensure pip is installed in the library's venv."""
+        python_path = self._get_venv_python_path()
 
+        # Check if pip is available
         result = subprocess.run(
-            cmd,
-            check=True,
+            [str(python_path), "-m", "pip", "--version"],
             capture_output=True,
             text=True
         )
 
-        if result.stdout:
-            logger.debug(result.stdout)
-        if result.stderr:
-            logger.debug(result.stderr)
+        if result.returncode == 0:
+            logger.debug(f"pip already installed: {result.stdout.strip()}")
+            return
+
+        # pip not found, install it using ensurepip
+        logger.info("pip not found in venv, installing with ensurepip...")
+        subprocess.run(
+            [str(python_path), "-m", "ensurepip", "--upgrade"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logger.info("pip installed successfully")
+
+    def _run_pip_install(self, packages: list[str]) -> None:
+        """Run pip install with the given packages using the library's venv."""
+        python_path = self._get_venv_python_path()
+        cmd = [str(python_path), "-m", "pip", "install"] + packages
+        logger.info(f"Running: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+
+            if result.stdout:
+                logger.debug(result.stdout)
+            if result.stderr:
+                logger.debug(result.stderr)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"pip install failed with exit code {e.returncode}")
+            if e.stdout:
+                logger.error(f"stdout: {e.stdout}")
+            if e.stderr:
+                logger.error(f"stderr: {e.stderr}")
+            raise
 
     def _init_sam3_submodule(self) -> Path:
         """Initialize the SAM3 git submodule."""
-        # Get the library root directory (parent of this file's directory)
-        library_root = Path(__file__).parent.parent
-        sam3_submodule_dir = library_root / "griptape_nodes_sam3_library" / "sam3"
-
-        logger.info(f"Library root: {library_root}")
-        logger.info(f"Expected submodule path: {sam3_submodule_dir}")
+        library_root = self._get_library_root()
+        sam3_submodule_dir = library_root / "_sam3_repo"
 
         # Check if submodule is already initialized (has contents)
         if sam3_submodule_dir.exists() and any(sam3_submodule_dir.iterdir()):
-            logger.info("SAM3 submodule already initialized")
             return sam3_submodule_dir
 
-        # Initialize submodule
-        logger.info("Initializing git submodule...")
-        result = subprocess.run(
+        # Initialize submodule (git command runs from repo root, one level up)
+        git_repo_root = library_root.parent
+        subprocess.run(
             ["git", "submodule", "update", "--init", "--recursive"],
-            cwd=library_root,
+            cwd=git_repo_root,
             check=True,
             capture_output=True,
             text=True
         )
-
-        if result.stdout:
-            logger.info(result.stdout)
-        if result.stderr:
-            logger.debug(result.stderr)
 
         # Verify submodule was initialized
         if not sam3_submodule_dir.exists() or not any(sam3_submodule_dir.iterdir()):
@@ -218,17 +226,8 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         Also installs with [notebooks] extras which includes einops and other
         dependencies not listed in the base requirements.
         """
-        cmd = [sys.executable, "-m", "pip", "install", "-e", f"{sam3_dir}[notebooks]"]
-        logger.info(f"Running: {' '.join(cmd)}")
-
-        result = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
-        if result.stdout:
-            logger.debug(result.stdout)
-        if result.stderr:
-            logger.error(result.stderr)
+        # Use compat mode for editable install to create .pth file linking to source
+        self._run_pip_install([
+            "--config-settings", "editable_mode=compat",
+            "-e", f"{sam3_dir}[notebooks]"
+        ])

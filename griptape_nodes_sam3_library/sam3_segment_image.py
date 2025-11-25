@@ -13,6 +13,7 @@ from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
+from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.traits.slider import Slider
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
@@ -108,15 +109,8 @@ class Sam3SegmentImage(SuccessFailureNode):
             )
         )
 
-        self.add_parameter(
-            Parameter(
-                name="logs",
-                output_type="str",
-                tooltip="Processing logs",
-                allowed_modes={ParameterMode.OUTPUT},
-                default_value="",
-            )
-        )
+        self.log_params = LogParameter(self)
+        self.log_params.add_output_parameters()
 
         # Add status parameters for success/failure tracking
         self._create_status_parameters(
@@ -161,23 +155,23 @@ class Sam3SegmentImage(SuccessFailureNode):
                 self._handle_failure_exception(ValueError(error_details))
                 return
 
-            self.append_value_to_parameter("logs", "Starting SAM3 segmentation...\n")
-            self.append_value_to_parameter("logs", f"Text prompt: {text_prompt}\n")
+            self.log_params.append_to_logs("Starting SAM3 segmentation...\n")
+            self.log_params.append_to_logs(f"Text prompt: {text_prompt}\n")
 
             # Convert image artifact to PIL Image
             input_image = self._artifact_to_pil(input_image_artifact)
 
-            self.append_value_to_parameter("logs", f"Image size: {input_image.size}\n")
+            self.log_params.append_to_logs(f"Image size: {input_image.size}\n")
 
             # Load or initialize model
             self._load_model()
 
             # Set the image in the processor
-            self.append_value_to_parameter("logs", "Processing image...\n")
+            self.log_params.append_to_logs("Processing image...\n")
             inference_state = self._processor.set_image(input_image)
 
             # Run segmentation with text prompt
-            self.append_value_to_parameter("logs", f"Segmenting '{text_prompt}'...\n")
+            self.log_params.append_to_logs(f"Segmenting '{text_prompt}'...\n")
             output = self._processor.set_text_prompt(
                 state=inference_state,
                 prompt=text_prompt
@@ -193,7 +187,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             filtered_scores = [scores[i] for i in filtered_indices[:max_masks]]
 
             num_found = len(filtered_masks)
-            self.append_value_to_parameter("logs", f"Found {num_found} masks with score >= {score_threshold}\n")
+            self.log_params.append_to_logs(f"Found {num_found} masks with score >= {score_threshold}\n")
 
             # Convert masks to image artifacts
             mask_artifacts = []
@@ -202,7 +196,7 @@ class Sam3SegmentImage(SuccessFailureNode):
                 mask_artifact = self._pil_to_artifact(mask_img)
                 mask_artifacts.append(mask_artifact)
                 score_val = filtered_scores[i].item() if hasattr(filtered_scores[i], 'item') else float(filtered_scores[i])
-                self.append_value_to_parameter("logs", f"Mask {i+1}: score={score_val:.3f}\n")
+                self.log_params.append_to_logs(f"Mask {i+1}: score={score_val:.3f}\n")
 
             # Create composite image with all masks overlaid
             composite_image = self._create_composite(input_image, filtered_masks)
@@ -213,7 +207,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             self.set_parameter_value("output_composite", composite_artifact)
             self.set_parameter_value("num_masks_found", num_found)
 
-            self.append_value_to_parameter("logs", "Segmentation complete!\n")
+            self.log_params.append_to_logs("Segmentation complete!\n")
 
             # Publish outputs
             self.parameter_output_values["output_masks"] = mask_artifacts
@@ -231,7 +225,7 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         except Exception as e:
             error_msg = f"Error during segmentation: {str(e)}"
-            self.append_value_to_parameter("logs", f"{error_msg}\n")
+            self.log_params.append_to_logs(f"{error_msg}\n")
             logger.error(error_msg, exc_info=True)
 
             # Set failure status
@@ -247,10 +241,18 @@ class Sam3SegmentImage(SuccessFailureNode):
     def _load_model(self) -> None:
         """Load or cache the SAM3 model"""
         if self._model is not None:
-            self.append_value_to_parameter("logs", "Using cached model\n")
+            self.log_params.append_to_logs("Using cached model\n")
             return
 
-        self.append_value_to_parameter("logs", "Loading SAM3 model from Hugging Face...\n")
+        self.log_params.append_to_logs("Loading SAM3 model from Hugging Face...\n")
+
+        # Add _sam3_repo to sys.path if not present (needed because .pth files
+        # aren't processed when running from griptape-nodes' venv)
+        import sys
+        from pathlib import Path
+        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
+        if sam3_repo_path not in sys.path:
+            sys.path.insert(0, sam3_repo_path)
 
         try:
             # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
@@ -264,15 +266,15 @@ class Sam3SegmentImage(SuccessFailureNode):
             score_threshold = self.get_parameter_value("score_threshold")
             self._processor = Sam3Processor(self._model, confidence_threshold=score_threshold)
 
-            self.append_value_to_parameter("logs", "Model loaded successfully\n")
+            self.log_params.append_to_logs("Model loaded successfully\n")
 
         except ImportError as e:
             error_msg = "SAM3 library not installed. Please check the installation logs."
-            self.append_value_to_parameter("logs", f"{error_msg}\n")
+            self.log_params.append_to_logs(f"{error_msg}\n")
             raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
-            self.append_value_to_parameter("logs", f"{error_msg}\n")
+            self.log_params.append_to_logs(f"{error_msg}\n")
             raise
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact) -> Image.Image:
