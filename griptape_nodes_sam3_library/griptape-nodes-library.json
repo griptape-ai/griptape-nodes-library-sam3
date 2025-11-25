@@ -4,7 +4,7 @@
   "advanced_library_path": "sam3_library_advanced.py",
   "metadata": {
     "author": "griptape-ai",
-    "description": "SAM3 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image segmentation with text prompts",
+    "description": "SAM3 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts",
     "library_version": "0.1.0",
     "engine_version": "0.60.2",
     "tags": [
@@ -12,6 +12,7 @@
       "AI",
       "SAM3",
       "Image Segmentation",
+      "Video Segmentation",
       "Computer Vision",
       "Meta"
     ],
@@ -32,7 +33,7 @@
       "sam3": {
         "color": "border-purple-500",
         "title": "SAM3",
-        "description": "SAM3 image segmentation nodes",
+        "description": "SAM3 image and video segmentation nodes",
         "icon": "layers"
       }
     }
@@ -45,6 +46,15 @@
         "category": "sam3",
         "description": "Segment objects in images using SAM3 with text prompts",
         "display_name": "SAM3 Segment Image"
+      }
+    },
+    {
+      "class_name": "Sam3SegmentVideo",
+      "file_path": "sam3_segment_video.py",
+      "metadata": {
+        "category": "sam3",
+        "description": "Segment objects in videos using SAM3 with text prompts",
+        "display_name": "SAM3 Segment Video"
       }
     }
   ]

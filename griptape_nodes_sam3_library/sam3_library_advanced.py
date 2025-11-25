@@ -76,7 +76,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             # Enable TF32 for Ampere+ GPUs (significant speedup with minimal precision loss)
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-            logger.info("PyTorch TF32 settings enabled for GPU acceleration")
+            logger.debug("PyTorch TF32 settings enabled for GPU acceleration")
         except ImportError:
             logger.warning("PyTorch not available, skipping TF32 configuration")
 
