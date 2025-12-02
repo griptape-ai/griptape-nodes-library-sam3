@@ -417,11 +417,21 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 elif not isinstance(mask, np.ndarray):
                     mask = np.array(mask)
 
-                if mask.ndim > 2:
-                    mask = mask.squeeze()
+                # Squeeze extra dimensions but ensure 2D result
+                while mask.ndim > 2:
+                    logger.warning(f"Frame {frame_idx}, obj {obj_id}: Mask has ndim={mask.ndim}, squeezing last dimension.")
+                    mask = mask.squeeze(0)
+
+                # Validate mask is 2D with non-zero dimensions
+                if mask.ndim != 2:
+                    logger.warning(f"Frame {frame_idx}, obj {obj_id}: Invalid mask ndim={mask.ndim}, shape={mask.shape}. Skipping.")
+                    continue
+                if mask.shape[0] == 0 or mask.shape[1] == 0:
+                    logger.warning(f"Frame {frame_idx}, obj {obj_id}: Empty mask shape={mask.shape}. Skipping.")
+                    continue
 
                 # Resize mask to match frame if needed
-                if mask.shape[:2] != frame.shape[:2]:
+                if mask.shape[0] != frame.shape[0] or mask.shape[1] != frame.shape[1]:
                     mask = cv2.resize(mask.astype(np.float32), (frame.shape[1], frame.shape[0]))
                     mask = mask > 0.5
 
