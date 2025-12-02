@@ -289,6 +289,24 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
+            # Release VRAM - shutdown predictor and clear cache
+            if self._predictor is not None:
+                try:
+                    self._predictor.shutdown()
+                    self.log_params.append_to_logs("Video predictor shut down\n")
+                except Exception as shutdown_error:
+                    logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
+                self._predictor = None
+
+            # Clear CUDA cache
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    self.log_params.append_to_logs("CUDA cache cleared\n")
+            except Exception:
+                pass
+
     def _load_model(self) -> None:
         """Load or cache the SAM3 video predictor"""
         if self._predictor is not None:
@@ -409,25 +427,30 @@ class Sam3SegmentVideo(SuccessFailureNode):
             frame = cv2.imread(str(frame_path))
             overlay = frame.copy()
 
+            # Get masks from output structure
+            binary_masks = outputs.get("out_binary_masks")
+            if binary_masks is None:
+                continue
+
+            # Handle tensor on GPU if needed
+            if hasattr(binary_masks, 'cpu'):
+                binary_masks = binary_masks.cpu().numpy()
+            elif not isinstance(binary_masks, np.ndarray):
+                binary_masks = np.array(binary_masks)
+
+            # binary_masks shape is [num_objects, H, W]
+            if binary_masks.ndim == 2:
+                # Single mask, add object dimension
+                binary_masks = binary_masks[np.newaxis, ...]
+            elif binary_masks.ndim != 3:
+                logger.warning(f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Skipping.")
+                continue
+
             # Apply each object's mask
-            for obj_idx, (obj_id, mask) in enumerate(outputs.items()):
-                # Handle tensor on GPU if needed
-                if hasattr(mask, 'cpu'):
-                    mask = mask.cpu().numpy()
-                elif not isinstance(mask, np.ndarray):
-                    mask = np.array(mask)
-
-                # Squeeze extra dimensions but ensure 2D result
-                while mask.ndim > 2:
-                    logger.warning(f"Frame {frame_idx}, obj {obj_id}: Mask has ndim={mask.ndim}, squeezing last dimension.")
-                    mask = mask.squeeze(0)
-
-                # Validate mask is 2D with non-zero dimensions
-                if mask.ndim != 2:
-                    logger.warning(f"Frame {frame_idx}, obj {obj_id}: Invalid mask ndim={mask.ndim}, shape={mask.shape}. Skipping.")
-                    continue
+            for obj_idx, mask in enumerate(binary_masks):
+                # Validate mask dimensions
                 if mask.shape[0] == 0 or mask.shape[1] == 0:
-                    logger.warning(f"Frame {frame_idx}, obj {obj_id}: Empty mask shape={mask.shape}. Skipping.")
+                    logger.warning(f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Skipping.")
                     continue
 
                 # Resize mask to match frame if needed
