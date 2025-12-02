@@ -84,9 +84,18 @@ class Sam3SegmentVideo(SuccessFailureNode):
         # Output parameters
         self.add_parameter(
             Parameter(
-                name="output_video",
+                name="output_masks",
+                output_type="list",
+                tooltip="List of mask videos as VideoUrlArtifacts (one per segmented object)",
+                allowed_modes={ParameterMode.OUTPUT},
+            )
+        )
+
+        self.add_parameter(
+            Parameter(
+                name="output_composite",
                 output_type="VideoUrlArtifact",
-                tooltip="Video with segmentation masks overlaid",
+                tooltip="Composite video with all masks overlaid",
                 allowed_modes={ParameterMode.OUTPUT},
             )
         )
@@ -213,19 +222,29 @@ class Sam3SegmentVideo(SuccessFailureNode):
             num_frames = len(outputs_per_frame)
             self.log_params.append_to_logs(f"Processed {num_frames} frames\n")
 
-            # Create output video with masks overlaid
-            self.log_params.append_to_logs("Creating output video with masks...\n")
-            output_frames_dir = temp_dir / "output_frames"
-            output_frames_dir.mkdir()
+            # Create individual mask videos and composite video
+            self.log_params.append_to_logs("Creating output videos...\n")
+            composite_frames_dir = temp_dir / "composite_frames"
+            composite_frames_dir.mkdir()
 
-            self._create_masked_frames(frames_dir, outputs_per_frame, output_frames_dir, mask_opacity)
+            # Create mask frame directories for each object
+            mask_artifacts = []
+            mask_frame_dirs = self._create_masked_frames_multi(
+                frames_dir, outputs_per_frame, composite_frames_dir, temp_dir, mask_opacity
+            )
 
-            # Encode output video
-            output_video_path = temp_dir / "output.mp4"
-            self._encode_video(output_frames_dir, output_video_path, fps)
+            # Encode individual mask videos
+            for obj_idx, mask_frames_dir in enumerate(mask_frame_dirs):
+                mask_video_path = temp_dir / f"mask_{obj_idx}.mp4"
+                self._encode_video(mask_frames_dir, mask_video_path, fps)
+                mask_artifact = self._video_to_artifact(mask_video_path)
+                mask_artifacts.append(mask_artifact)
+                self.log_params.append_to_logs(f"Created mask video {obj_idx + 1}\n")
 
-            # Save to static files
-            output_artifact = self._video_to_artifact(output_video_path)
+            # Encode composite video
+            composite_video_path = temp_dir / "composite.mp4"
+            self._encode_video(composite_frames_dir, composite_video_path, fps)
+            composite_artifact = self._video_to_artifact(composite_video_path)
 
             # Close session
             self._predictor.handle_request(
@@ -237,23 +256,25 @@ class Sam3SegmentVideo(SuccessFailureNode):
             session_id = None
 
             # Set output parameters
-            self.set_parameter_value("output_video", output_artifact)
+            self.set_parameter_value("output_masks", mask_artifacts)
+            self.set_parameter_value("output_composite", composite_artifact)
             self.set_parameter_value("num_frames_processed", num_frames)
-            self.set_parameter_value("num_objects_found", num_objects)
+            self.set_parameter_value("num_objects_found", len(mask_artifacts))
 
             self.log_params.append_to_logs("Video segmentation complete!\n")
 
             # Publish outputs
-            self.parameter_output_values["output_video"] = output_artifact
+            self.parameter_output_values["output_masks"] = mask_artifacts
+            self.parameter_output_values["output_composite"] = composite_artifact
             self.parameter_output_values["num_frames_processed"] = num_frames
-            self.parameter_output_values["num_objects_found"] = num_objects
+            self.parameter_output_values["num_objects_found"] = len(mask_artifacts)
 
             # Set success status
             success_details = (
                 f"Video segmentation completed successfully\n"
                 f"Text prompt: {text_prompt}\n"
                 f"Frames processed: {num_frames}\n"
-                f"Objects found: {num_objects}"
+                f"Objects found: {len(mask_artifacts)}"
             )
             self._set_status_results(was_successful=True, result_details=f"SUCCESS: {success_details}")
 
@@ -296,10 +317,14 @@ class Sam3SegmentVideo(SuccessFailureNode):
                     self.log_params.append_to_logs("Video predictor shut down\n")
                 except Exception as shutdown_error:
                     logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
+                del self._predictor
                 self._predictor = None
 
-            # Clear CUDA cache
+            # Force garbage collection and clear CUDA cache
             try:
+                import gc
+                gc.collect()
+
                 import torch
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -400,10 +425,14 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         return outputs_per_frame
 
-    def _create_masked_frames(
-        self, input_dir: Path, outputs_per_frame: dict, output_dir: Path, opacity: float
-    ) -> None:
-        """Create frames with mask overlays."""
+    def _create_masked_frames_multi(
+        self, input_dir: Path, outputs_per_frame: dict, composite_dir: Path, temp_dir: Path, opacity: float
+    ) -> list[Path]:
+        """Create individual mask frame directories and composite frames.
+
+        Returns list of mask frame directories (one per object) for encoding into separate videos.
+        Also creates composite frames in composite_dir with all masks overlaid.
+        """
         import cv2
 
         # Color palette for different objects
@@ -417,6 +446,32 @@ class Sam3SegmentVideo(SuccessFailureNode):
             (255, 128, 0),  # Orange
             (128, 0, 255),  # Purple
         ]
+
+        # Determine number of objects from first frame with masks
+        num_objects = 0
+        for outputs in outputs_per_frame.values():
+            binary_masks = outputs.get("out_binary_masks")
+            if binary_masks is not None:
+                if hasattr(binary_masks, 'cpu'):
+                    binary_masks = binary_masks.cpu().numpy()
+                elif not isinstance(binary_masks, np.ndarray):
+                    binary_masks = np.array(binary_masks)
+                if binary_masks.ndim == 2:
+                    num_objects = 1
+                elif binary_masks.ndim == 3:
+                    num_objects = binary_masks.shape[0]
+                break
+
+        if num_objects == 0:
+            logger.warning("No masks found in any frame")
+            return []
+
+        # Create directories for each object's mask frames
+        mask_frame_dirs = []
+        for obj_idx in range(num_objects):
+            mask_dir = temp_dir / f"mask_frames_{obj_idx}"
+            mask_dir.mkdir()
+            mask_frame_dirs.append(mask_dir)
 
         for frame_idx, outputs in outputs_per_frame.items():
             # Load original frame
@@ -446,8 +501,11 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 logger.warning(f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Skipping.")
                 continue
 
-            # Apply each object's mask
+            # Process each object's mask
             for obj_idx, mask in enumerate(binary_masks):
+                if obj_idx >= len(mask_frame_dirs):
+                    break
+
                 # Validate mask dimensions
                 if mask.shape[0] == 0 or mask.shape[1] == 0:
                     logger.warning(f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Skipping.")
@@ -458,16 +516,25 @@ class Sam3SegmentVideo(SuccessFailureNode):
                     mask = cv2.resize(mask.astype(np.float32), (frame.shape[1], frame.shape[0]))
                     mask = mask > 0.5
 
-                # Apply colored overlay where mask is True
                 color = colors[obj_idx % len(colors)]
+
+                # Save individual mask frame (colored mask on black background)
+                mask_frame = np.zeros_like(frame)
+                mask_frame[mask > 0] = color
+                mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
+                cv2.imwrite(str(mask_frame_path), mask_frame)
+
+                # Apply to composite overlay
                 overlay[mask > 0] = color
 
-            # Blend overlay with original frame
-            output_frame = cv2.addWeighted(frame, 1 - opacity, overlay, opacity, 0)
+            # Blend overlay with original frame for composite
+            composite_frame = cv2.addWeighted(frame, 1 - opacity, overlay, opacity, 0)
 
-            # Save output frame
-            output_path = output_dir / f"{frame_idx:06d}.jpg"
-            cv2.imwrite(str(output_path), output_frame)
+            # Save composite frame
+            composite_path = composite_dir / f"{frame_idx:06d}.jpg"
+            cv2.imwrite(str(composite_path), composite_frame)
+
+        return mask_frame_dirs
 
     def _encode_video(self, frames_dir: Path, output_path: Path, fps: float) -> None:
         """Encode frames back into a video."""
