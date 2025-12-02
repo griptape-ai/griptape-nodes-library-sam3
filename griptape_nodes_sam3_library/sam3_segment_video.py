@@ -283,15 +283,6 @@ class Sam3SegmentVideo(SuccessFailureNode):
             self.log_params.append_to_logs(f"{error_msg}\n")
             logger.error(error_msg, exc_info=True)
 
-            # Try to close session if open
-            if session_id and self._predictor:
-                try:
-                    self._predictor.handle_request(
-                        request=dict(type="close_session", session_id=session_id)
-                    )
-                except Exception:
-                    pass
-
             # Set failure status
             failure_details = (
                 f"Video segmentation failed\n"
@@ -310,8 +301,19 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
-            # Release VRAM - shutdown predictor and clear cache
+            # Release VRAM - close session and shutdown predictor
             if self._predictor is not None:
+                # Close session first to free GPU resources
+                if session_id is not None:
+                    try:
+                        self._predictor.handle_request(
+                            request=dict(type="close_session", session_id=session_id)
+                        )
+                        self.log_params.append_to_logs("Session closed\n")
+                    except Exception:
+                        pass
+
+                # Then shutdown the predictor
                 try:
                     self._predictor.shutdown()
                     self.log_params.append_to_logs("Video predictor shut down\n")
