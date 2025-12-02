@@ -238,6 +238,30 @@ class Sam3SegmentImage(SuccessFailureNode):
             self._set_status_results(was_successful=False, result_details=f"FAILURE: {failure_details}")
             self._handle_failure_exception(e)
 
+        finally:
+            # Release VRAM - clear model and processor
+            if self._model is not None or self._processor is not None:
+                # Delete processor first (it holds a reference to model)
+                if self._processor is not None:
+                    del self._processor
+                    self._processor = None
+                if self._model is not None:
+                    del self._model
+                    self._model = None
+                self.log_params.append_to_logs("Model released\n")
+
+            # Force garbage collection and clear CUDA cache
+            try:
+                import gc
+                gc.collect()
+
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    self.log_params.append_to_logs("CUDA cache cleared\n")
+            except Exception:
+                pass
+
     def _load_model(self) -> None:
         """Load or cache the SAM3 model"""
         if self._model is not None:
