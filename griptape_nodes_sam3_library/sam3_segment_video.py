@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
+from griptape.artifacts import VideoUrlArtifact
 
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
@@ -242,17 +243,17 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 frames_dir, outputs_per_frame, composite_frames_dir, temp_dir, mask_opacity,
             )
 
-            # Encode individual mask videos
+            # Encode individual mask videos (directly to H.264)
             for obj_idx, mask_frames_dir in enumerate(mask_frame_dirs):
                 mask_video_path = temp_dir / f"mask_{obj_idx}.mp4"
-                await asyncio.to_thread(self._encode_video, mask_frames_dir, mask_video_path, fps)
+                await self._encode_video(mask_frames_dir, mask_video_path, fps)
                 mask_artifact = self._video_to_artifact(mask_video_path)
                 mask_artifacts.append(mask_artifact)
                 self.log_params.append_to_logs(f"Created mask video {obj_idx + 1}\n")
 
-            # Encode composite video
+            # Encode composite video (directly to H.264)
             composite_video_path = temp_dir / "composite.mp4"
-            await asyncio.to_thread(self._encode_video, composite_frames_dir, composite_video_path, fps)
+            await self._encode_video(composite_frames_dir, composite_video_path, fps)
             composite_artifact = self._video_to_artifact(composite_video_path)
 
             # Close session
@@ -547,32 +548,34 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         return mask_frame_dirs
 
-    def _encode_video(self, frames_dir: Path, output_path: Path, fps: float) -> None:
-        """Encode frames back into a video."""
-        import cv2
-
-        # Get list of frames
+    async def _encode_video(self, frames_dir: Path, output_path: Path, fps: float) -> None:
+        """Encode frames back into a web-browser-compatible video using ffmpeg."""
+        # Get list of frames to verify we have frames
         frame_files = sorted(frames_dir.glob("*.jpg"))
         if not frame_files:
             raise ValueError("No frames to encode")
 
-        # Read first frame to get dimensions
-        first_frame = cv2.imread(str(frame_files[0]))
-        height, width = first_frame.shape[:2]
+        # Use ffmpeg to encode frames directly to H.264
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-framerate", str(fps),
+            "-i", str(frames_dir / "%06d.jpg"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-y",
+            str(output_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
-        # Create video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+        _, stderr = await process.communicate()
 
-        for frame_file in frame_files:
-            frame = cv2.imread(str(frame_file))
-            out.write(frame)
-
-        out.release()
+        if process.returncode != 0:
+            error_message = stderr.decode() if stderr else "Unknown error"
+            raise RuntimeError(f"ffmpeg encoding failed: {error_message}")
 
     def _video_to_artifact(self, video_path: Path):
         """Convert video file to VideoUrlArtifact."""
-        from griptape.artifacts import VideoUrlArtifact
 
         video_bytes = video_path.read_bytes()
         filename = f"{uuid.uuid4()}.mp4"

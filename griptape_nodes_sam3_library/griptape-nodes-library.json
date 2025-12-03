@@ -5,7 +5,7 @@
   "metadata": {
     "author": "griptape-ai",
     "description": "SAM3 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts",
-    "library_version": "0.1.0",
+    "library_version": "0.2.0",
     "engine_version": "0.60.2",
     "tags": [
       "Griptape",
@@ -20,7 +20,8 @@
       "pip_dependencies": [
         "torch>=2.7.0",
         "torchvision>=0.22.0",
-        "torchaudio>=2.7.0"
+        "torchaudio>=2.7.0",
+        "static_ffmpeg>=2.13.0"
       ],
       "pip_install_flags": [
         "--preview",
