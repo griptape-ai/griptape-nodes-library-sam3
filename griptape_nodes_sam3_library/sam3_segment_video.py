@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import shutil
 import tempfile
@@ -145,7 +146,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         return errors if errors else None
 
-    def process(self) -> None:
+    async def aprocess(self) -> None:
+        await self._process()
+
+    async def _process(self) -> None:
         """Main processing logic"""
         # Reset execution state at the start of each run
         self._clear_execution_status()
@@ -176,7 +180,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
             # Extract frames from video
             self.log_params.append_to_logs("Extracting video frames...\n")
-            video_path, fps, frame_count = self._extract_frames(input_video_artifact, frames_dir)
+            video_path, fps, frame_count = await asyncio.to_thread(
+                self._extract_frames, input_video_artifact, frames_dir
+            )
             self.log_params.append_to_logs(f"Extracted {frame_count} frames at {fps:.2f} FPS\n")
 
             # Validate prompt_frame
@@ -185,6 +191,8 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 self.log_params.append_to_logs(f"Prompt frame adjusted to 0 (was >= frame count)\n")
 
             # Load or initialize model
+            # Note: SAM3 video predictor uses torch.distributed internally,
+            # so predictor calls are not wrapped in asyncio.to_thread
             self._load_model()
 
             # Start video session
@@ -229,21 +237,22 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
             # Create mask frame directories for each object
             mask_artifacts = []
-            mask_frame_dirs = self._create_masked_frames_multi(
-                frames_dir, outputs_per_frame, composite_frames_dir, temp_dir, mask_opacity
+            mask_frame_dirs = await asyncio.to_thread(
+                self._create_masked_frames_multi,
+                frames_dir, outputs_per_frame, composite_frames_dir, temp_dir, mask_opacity,
             )
 
             # Encode individual mask videos
             for obj_idx, mask_frames_dir in enumerate(mask_frame_dirs):
                 mask_video_path = temp_dir / f"mask_{obj_idx}.mp4"
-                self._encode_video(mask_frames_dir, mask_video_path, fps)
+                await asyncio.to_thread(self._encode_video, mask_frames_dir, mask_video_path, fps)
                 mask_artifact = self._video_to_artifact(mask_video_path)
                 mask_artifacts.append(mask_artifact)
                 self.log_params.append_to_logs(f"Created mask video {obj_idx + 1}\n")
 
             # Encode composite video
             composite_video_path = temp_dir / "composite.mp4"
-            self._encode_video(composite_frames_dir, composite_video_path, fps)
+            await asyncio.to_thread(self._encode_video, composite_frames_dir, composite_video_path, fps)
             composite_artifact = self._video_to_artifact(composite_video_path)
 
             # Close session

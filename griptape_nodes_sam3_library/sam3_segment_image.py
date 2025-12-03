@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from io import BytesIO
@@ -137,7 +138,10 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         return errors if errors else None
 
-    def process(self) -> None:
+    async def aprocess(self) -> None:
+        await self._process()
+
+    async def _process(self) -> None:
         """Main processing logic"""
         # Reset execution state at the start of each run
         self._clear_execution_status()
@@ -164,17 +168,18 @@ class Sam3SegmentImage(SuccessFailureNode):
             self.log_params.append_to_logs(f"Image size: {input_image.size}\n")
 
             # Load or initialize model
-            self._load_model()
+            await asyncio.to_thread(self._load_model)
 
             # Set the image in the processor
             self.log_params.append_to_logs("Processing image...\n")
-            inference_state = self._processor.set_image(input_image)
+            inference_state = await asyncio.to_thread(self._processor.set_image, input_image)
 
             # Run segmentation with text prompt
             self.log_params.append_to_logs(f"Segmenting '{text_prompt}'...\n")
-            output = self._processor.set_text_prompt(
+            output = await asyncio.to_thread(
+                self._processor.set_text_prompt,
                 state=inference_state,
-                prompt=text_prompt
+                prompt=text_prompt,
             )
 
             # Extract results
