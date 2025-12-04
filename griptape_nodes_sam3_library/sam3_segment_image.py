@@ -10,6 +10,7 @@ from griptape.artifacts import ImageArtifact, ImageUrlArtifact
 from PIL import Image
 
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
+from griptape_nodes.retained_mode.events.os_events import ExistingFilePolicy
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
@@ -331,7 +332,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
         filename = f"{uuid.uuid4()}.png"
-        url = GriptapeNodes.StaticFilesManager().save_static_file(image_bytes, filename)
+        url = GriptapeNodes.StaticFilesManager().save_static_file(image_bytes, filename, ExistingFilePolicy.CREATE_NEW)
         return ImageUrlArtifact(url)
 
     def _mask_to_image(self, mask: Any) -> Image.Image:
