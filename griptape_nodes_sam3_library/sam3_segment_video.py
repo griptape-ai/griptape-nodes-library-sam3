@@ -12,6 +12,7 @@ from PIL import Image
 from griptape.artifacts import VideoUrlArtifact
 
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
+from griptape_nodes.retained_mode.events.os_events import ExistingFilePolicy
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
@@ -593,5 +594,5 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         video_bytes = video_path.read_bytes()
         filename = f"{uuid.uuid4()}.mp4"
-        url = GriptapeNodes.StaticFilesManager().save_static_file(video_bytes, filename)
+        url = GriptapeNodes.StaticFilesManager().save_static_file(video_bytes, filename, ExistingFilePolicy.CREATE_NEW)
         return VideoUrlArtifact(url)
