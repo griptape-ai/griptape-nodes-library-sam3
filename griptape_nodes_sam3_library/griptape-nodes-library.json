@@ -23,18 +23,23 @@
         "torchaudio>=2.7.0",
         "static_ffmpeg>=2.13.0"
       ],
-      "pip_install_flags": [
-        "--preview",
-        "--torch-backend=auto"
-      ]
+      "pip_install_flags": ["--preview", "--torch-backend=auto"]
     }
   },
   "categories": [
     {
-      "sam3": {
+      "image/segmentation": {
         "color": "border-purple-500",
-        "title": "SAM3",
-        "description": "SAM3 image and video segmentation nodes",
+        "title": "Image/Segmentation",
+        "description": "Image segmentation nodes",
+        "icon": "layers"
+      }
+    },
+    {
+      "video/segmentation": {
+        "color": "border-pink-500",
+        "title": "Video/Segmentation",
+        "description": "Video segmentation nodes",
         "icon": "layers"
       }
     }
@@ -44,7 +49,7 @@
       "class_name": "Sam3SegmentImage",
       "file_path": "sam3_segment_image.py",
       "metadata": {
-        "category": "sam3",
+        "category": "image/segmentation",
         "description": "Segment objects in images using SAM3 with text prompts",
         "display_name": "SAM3 Segment Image"
       }
@@ -53,7 +58,7 @@
       "class_name": "Sam3SegmentVideo",
       "file_path": "sam3_segment_video.py",
       "metadata": {
-        "category": "sam3",
+        "category": "video/segmentation",
         "description": "Segment objects in videos using SAM3 with text prompts",
         "display_name": "SAM3 Segment Video"
       }
