@@ -555,9 +555,12 @@ class Sam3SegmentVideo(SuccessFailureNode):
         if not frame_files:
             raise ValueError("No frames to encode")
 
+        # Get ffmpeg path
+        ffmpeg_path, _ = self._get_ffmpeg_paths()
+
         # Use ffmpeg to encode frames directly to H.264
         process = await asyncio.create_subprocess_exec(
-            "ffmpeg",
+            ffmpeg_path,
             "-framerate", str(fps),
             "-i", str(frames_dir / "%06d.jpg"),
             "-c:v", "libx264",
@@ -573,6 +576,17 @@ class Sam3SegmentVideo(SuccessFailureNode):
         if process.returncode != 0:
             error_message = stderr.decode() if stderr else "Unknown error"
             raise RuntimeError(f"ffmpeg encoding failed: {error_message}")
+
+    def _get_ffmpeg_paths(self) -> tuple[str, str]:
+        """Get FFmpeg and FFprobe executable paths."""
+        import static_ffmpeg
+
+        try:
+            ffmpeg_path, ffprobe_path = static_ffmpeg.run.get_or_fetch_platform_executables_else_raise()
+            return ffmpeg_path, ffprobe_path  # noqa: TRY300
+        except Exception as e:
+            error_msg = f"FFmpeg not found. Please ensure static-ffmpeg is properly installed. Error: {e!s}"
+            raise ValueError(error_msg) from e
 
     def _video_to_artifact(self, video_path: Path):
         """Convert video file to VideoUrlArtifact."""
