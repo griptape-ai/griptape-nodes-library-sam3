@@ -87,7 +87,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
         self.add_parameter(
             Parameter(
                 name="output_masks",
-                output_type="list",
+                output_type="list[VideoUrlArtifact]",
                 tooltip="List of mask videos as VideoUrlArtifacts (one per segmented object)",
                 allowed_modes={ParameterMode.OUTPUT},
             )

@@ -86,7 +86,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         self.add_parameter(
             Parameter(
                 name="output_masks",
-                output_type="list",
+                output_type="list[ImageUrlArtifact]",
                 tooltip="List of segmentation masks as ImageUrlArtifacts",
                 allowed_modes={ParameterMode.OUTPUT},
             )
