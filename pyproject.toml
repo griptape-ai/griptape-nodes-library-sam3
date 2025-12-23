@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = "~=3.12"
 dependencies = [
     "griptape-nodes",
+    "pygit2",
 ]
 # Note: sam3, torch, torchvision, torchaudio are installed by sam3_library_advanced.py
 # at runtime via the submodule, not as pip dependencies
