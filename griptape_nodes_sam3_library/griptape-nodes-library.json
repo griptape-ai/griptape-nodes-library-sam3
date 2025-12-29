@@ -24,7 +24,12 @@
         "static_ffmpeg>=2.13.0"
       ],
       "pip_install_flags": ["--preview", "--torch-backend=auto"]
-    }
+    },
+    "resources": {
+      "required": {
+        "compute": [["cuda"], "has_any"]
+      }
+    },
   },
   "categories": [
     {
