@@ -5,6 +5,8 @@ import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+import pygit2
+
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
@@ -189,6 +191,20 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
                 logger.error(f"stderr: {e.stderr}")
             raise
 
+    def _update_submodules_recursive(self, repo_path: Path) -> None:
+        """Recursively update and initialize all submodules.
+        Pygit2 does not have a built-in recursive update.
+        Equivalent to: git submodule update --init --recursive
+        """
+        repo = pygit2.Repository(str(repo_path))
+        repo.submodules.update(init=True)
+
+        # Recursively update nested submodules
+        for submodule in repo.submodules:
+            submodule_path = repo_path / submodule.path
+            if submodule_path.exists() and (submodule_path / ".git").exists():
+                self._update_submodules_recursive(submodule_path)
+
     def _init_sam3_submodule(self) -> Path:
         """Initialize the SAM3 git submodule."""
         library_root = self._get_library_root()
@@ -198,15 +214,9 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         if sam3_submodule_dir.exists() and any(sam3_submodule_dir.iterdir()):
             return sam3_submodule_dir
 
-        # Initialize submodule (git command runs from repo root, one level up)
+        # Initialize submodule using pygit2 (recursive)
         git_repo_root = library_root.parent
-        subprocess.run(
-            ["git", "submodule", "update", "--init", "--recursive"],
-            cwd=git_repo_root,
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        self._update_submodules_recursive(git_repo_root)
 
         # Verify submodule was initialized
         if not sam3_submodule_dir.exists() or not any(sam3_submodule_dir.iterdir()):
