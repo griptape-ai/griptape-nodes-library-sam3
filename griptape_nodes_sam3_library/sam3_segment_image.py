@@ -5,7 +5,6 @@ from io import BytesIO
 from typing import Any
 
 import numpy as np
-import requests
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact
 from PIL import Image
 
@@ -16,6 +15,8 @@ from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.traits.slider import Slider
+
+from griptape_nodes.files.file import File, FileLoadError
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
 
@@ -309,9 +310,8 @@ class Sam3SegmentImage(SuccessFailureNode):
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact) -> Image.Image:
         """Convert image artifact to PIL Image"""
         if isinstance(artifact, ImageUrlArtifact):
-            # For ImageUrlArtifact, we need to fetch the image
-            response = requests.get(artifact.value)
-            return Image.open(BytesIO(response.content)).convert("RGB")
+            image_bytes = File(artifact.value).read_bytes()
+            return Image.open(BytesIO(image_bytes)).convert("RGB")
         elif isinstance(artifact, ImageArtifact):
             # For ImageArtifact, get the image data
             # Handle different ways ImageArtifact might store data
