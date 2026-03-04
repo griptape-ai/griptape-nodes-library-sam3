@@ -86,9 +86,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
         # Output parameters
         self.add_parameter(
             Parameter(
-                name="output_masks",
-                output_type="list[VideoUrlArtifact]",
-                tooltip="List of mask videos as VideoUrlArtifacts (one per segmented object)",
+                name="output_mask",
+                output_type="VideoUrlArtifact",
+                tooltip="Mask video for the first segmented object as a VideoUrlArtifact",
                 allowed_modes={ParameterMode.OUTPUT},
             )
         )
@@ -237,19 +237,18 @@ class Sam3SegmentVideo(SuccessFailureNode):
             composite_frames_dir.mkdir()
 
             # Create mask frame directories for each object
-            mask_artifacts = []
             mask_frame_dirs = await asyncio.to_thread(
                 self._create_masked_frames_multi,
                 frames_dir, outputs_per_frame, composite_frames_dir, temp_dir, mask_opacity,
             )
 
-            # Encode individual mask videos (directly to H.264)
-            for obj_idx, mask_frames_dir in enumerate(mask_frame_dirs):
-                mask_video_path = temp_dir / f"mask_{obj_idx}.mp4"
-                await self._encode_video(mask_frames_dir, mask_video_path, fps)
+            # Encode the first object's mask video (directly to H.264)
+            mask_artifact = None
+            if mask_frame_dirs:
+                mask_video_path = temp_dir / "mask_0.mp4"
+                await self._encode_video(mask_frame_dirs[0], mask_video_path, fps)
                 mask_artifact = self._video_to_artifact(mask_video_path)
-                mask_artifacts.append(mask_artifact)
-                self.log_params.append_to_logs(f"Created mask video {obj_idx + 1}\n")
+                self.log_params.append_to_logs("Created mask video\n")
 
             # Encode composite video (directly to H.264)
             composite_video_path = temp_dir / "composite.mp4"
@@ -266,25 +265,25 @@ class Sam3SegmentVideo(SuccessFailureNode):
             session_id = None
 
             # Set output parameters
-            self.set_parameter_value("output_masks", mask_artifacts)
+            self.set_parameter_value("output_mask", mask_artifact)
             self.set_parameter_value("output_composite", composite_artifact)
             self.set_parameter_value("num_frames_processed", num_frames)
-            self.set_parameter_value("num_objects_found", len(mask_artifacts))
+            self.set_parameter_value("num_objects_found", len(mask_frame_dirs))
 
             self.log_params.append_to_logs("Video segmentation complete!\n")
 
             # Publish outputs
-            self.parameter_output_values["output_masks"] = mask_artifacts
+            self.parameter_output_values["output_mask"] = mask_artifact
             self.parameter_output_values["output_composite"] = composite_artifact
             self.parameter_output_values["num_frames_processed"] = num_frames
-            self.parameter_output_values["num_objects_found"] = len(mask_artifacts)
+            self.parameter_output_values["num_objects_found"] = len(mask_frame_dirs)
 
             # Set success status
             success_details = (
                 f"Video segmentation completed successfully\n"
                 f"Text prompt: {text_prompt}\n"
                 f"Frames processed: {num_frames}\n"
-                f"Objects found: {len(mask_artifacts)}"
+                f"Objects found: {len(mask_frame_dirs)}"
             )
             self._set_status_results(was_successful=True, result_details=f"SUCCESS: {success_details}")
 
