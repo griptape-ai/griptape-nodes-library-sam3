@@ -85,9 +85,9 @@ class Sam3SegmentImage(SuccessFailureNode):
         # Output parameters
         self.add_parameter(
             Parameter(
-                name="output_masks",
-                output_type="list[ImageUrlArtifact]",
-                tooltip="List of segmentation masks as ImageUrlArtifacts",
+                name="output_mask",
+                output_type="ImageUrlArtifact",
+                tooltip="Best segmentation mask as an ImageUrlArtifact",
                 allowed_modes={ParameterMode.OUTPUT},
             )
         )
@@ -194,28 +194,33 @@ class Sam3SegmentImage(SuccessFailureNode):
             num_found = len(filtered_masks)
             self.log_params.append_to_logs(f"Found {num_found} masks with score >= {score_threshold}\n")
 
-            # Convert masks to image artifacts
-            mask_artifacts = []
-            for i, mask in enumerate(filtered_masks):
-                mask_img = self._mask_to_image(mask)
-                mask_artifact = self._pil_to_artifact(mask_img)
-                mask_artifacts.append(mask_artifact)
-                score_val = filtered_scores[i].item() if hasattr(filtered_scores[i], 'item') else float(filtered_scores[i])
+            # Pick the best mask (highest score)
+            best_idx = 0
+            best_score = float(filtered_scores[0].item() if hasattr(filtered_scores[0], 'item') else filtered_scores[0])
+            for i, score in enumerate(filtered_scores):
+                score_val = float(score.item() if hasattr(score, 'item') else score)
                 self.log_params.append_to_logs(f"Mask {i+1}: score={score_val:.3f}\n")
+                if score_val > best_score:
+                    best_score = score_val
+                    best_idx = i
+
+            best_mask_img = self._mask_to_image(filtered_masks[best_idx])
+            best_mask_artifact = self._pil_to_artifact(best_mask_img)
+            self.log_params.append_to_logs(f"Selected mask {best_idx + 1} (score={best_score:.3f})\n")
 
             # Create composite image with all masks overlaid
             composite_image = self._create_composite(input_image, filtered_masks)
             composite_artifact = self._pil_to_artifact(composite_image)
 
             # Set output parameters
-            self.set_parameter_value("output_masks", mask_artifacts)
+            self.set_parameter_value("output_mask", best_mask_artifact)
             self.set_parameter_value("output_composite", composite_artifact)
             self.set_parameter_value("num_masks_found", num_found)
 
             self.log_params.append_to_logs("Segmentation complete!\n")
 
             # Publish outputs
-            self.parameter_output_values["output_masks"] = mask_artifacts
+            self.parameter_output_values["output_mask"] = best_mask_artifact
             self.parameter_output_values["output_composite"] = composite_artifact
             self.parameter_output_values["num_masks_found"] = num_found
 
