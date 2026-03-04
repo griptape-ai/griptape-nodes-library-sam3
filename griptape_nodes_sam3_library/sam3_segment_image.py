@@ -351,7 +351,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         # Convert to uint8 (0 or 255)
         mask_uint8 = (mask * 255).astype(np.uint8)
 
-        return Image.fromarray(mask_uint8, mode="L")
+        return Image.fromarray(mask_uint8, mode="L").convert("RGB")
 
     def _create_composite(self, original: Image.Image, masks: list) -> Image.Image:
         """Create a composite image with masks overlaid on the original"""
