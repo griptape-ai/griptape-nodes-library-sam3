@@ -37,6 +37,28 @@ SAM3 uses [Triton](https://github.com/triton-lang/triton) which requires a C++ c
 
 4. **Restart your computer** after installation
 
+
+## Update the PATH variable and CC variable in your computer ##
+1. Find where your Visual Studio Build Tools are.
+2. Copy the path - here is an example path
+```
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64
+```
+3. Add it to your PATH in your microsoft system settings [Tutorial Here](https://www.wikihow.com/Change-the-PATH-Environment-Variable-on-Windows#:~:text=Editing%20the%20Path%20in%20Windows,directory%20path%20and%20click%20OK.)
+4. Add a new User Environment Variable
+![Environment Image](images/add_env_variable.png)
+```
+# Variable Name
+CC
+# Variable Value
+{your-path}\cl.exe
+```
+
+### Windows: Install CUDA Toolkit
+1. **Download** [CUDA Toolkit 13.1](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
+2. **Run the installer**
+
+
 ### Install the Library
 
 1. **Download the library files** to your Griptape Nodes libraries directory:
