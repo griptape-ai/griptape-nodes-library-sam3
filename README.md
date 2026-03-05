@@ -38,7 +38,7 @@ SAM3 uses [Triton](https://github.com/triton-lang/triton) which requires a C++ c
 4. **Restart your computer** after installation
 
 
-## Update the PATH variable and CC variable in your computer ##
+### Update the PATH variable and CC variable in your computer ##
 1. Find where your Visual Studio Build Tools are.
 2. Copy the path - here is an example path
 ```
