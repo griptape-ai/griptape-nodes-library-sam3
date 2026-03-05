@@ -45,14 +45,14 @@ SAM3 uses [Triton](https://github.com/triton-lang/triton) which requires a C++ c
 C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64
 ```
 3. Add it to your PATH in your microsoft system settings [Tutorial Here](https://www.wikihow.com/Change-the-PATH-Environment-Variable-on-Windows#:~:text=Editing%20the%20Path%20in%20Windows,directory%20path%20and%20click%20OK.)
-4. Add a new User Environment Variable
-![Environment Image](images/add_env_variable.png)
+4. Add a new User Environment Variable with these values:
 ```
 # Variable Name
 CC
 # Variable Value
 {your-path}\cl.exe
 ```
+![Environment Image](images/add_env_variable.png)
 
 ### Windows: Install CUDA Toolkit
 1. **Download** [CUDA Toolkit 13.1](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local)
