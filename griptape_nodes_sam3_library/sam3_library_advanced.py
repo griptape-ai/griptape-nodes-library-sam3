@@ -1,11 +1,11 @@
 """SAM3 Library Advanced - Handles installation and setup for SAM3 dependencies"""
 
+import configparser
+import json
 import logging
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-
-import pygit2
 
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
@@ -191,19 +191,25 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
                 logger.error(f"stderr: {e.stderr}")
             raise
 
-    def _update_submodules_recursive(self, repo_path: Path) -> None:
-        """Recursively update and initialize all submodules.
-        Pygit2 does not have a built-in recursive update.
-        Equivalent to: git submodule update --init --recursive
-        """
-        repo = pygit2.Repository(str(repo_path))
-        repo.submodules.update(init=True)
-
-        # Recursively update nested submodules
-        for submodule in repo.submodules:
-            submodule_path = repo_path / submodule.path
-            if submodule_path.exists() and (submodule_path / ".git").exists():
-                self._update_submodules_recursive(submodule_path)
+    def _clone_submodules_from_gitmodules(self, gitmodules_path: Path) -> None:
+        """Parse a .gitmodules file and clone any submodules that are missing."""
+        repo_root = gitmodules_path.parent
+        config = configparser.ConfigParser()
+        config.read(gitmodules_path)
+        for section in config.sections():
+            submodule_path = repo_root / config[section]["path"]
+            url = config[section]["url"]
+            if submodule_path.exists() and any(submodule_path.iterdir()):
+                logger.debug(f"Submodule already present: {submodule_path}")
+                continue
+            logger.info(f"Cloning submodule {url} -> {submodule_path}")
+            submodule_path.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", url, str(submodule_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
 
     def _init_sam3_submodule(self) -> Path:
         """Initialize the SAM3 git submodule."""
@@ -214,11 +220,40 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         if sam3_submodule_dir.exists() and any(sam3_submodule_dir.iterdir()):
             return sam3_submodule_dir
 
-        # Initialize submodule using pygit2 (recursive)
-        git_repo_root = library_root.parent
-        self._update_submodules_recursive(git_repo_root)
+        # Walk up to find .gitmodules and clone all missing submodules
+        current = library_root.resolve()
+        while current != current.parent:
+            gitmodules_path = current / ".gitmodules"
+            if gitmodules_path.exists():
+                logger.info(f"Found .gitmodules at {gitmodules_path}")
+                self._clone_submodules_from_gitmodules(gitmodules_path)
+                break
+            current = current.parent
+        else:
+            # No .gitmodules found — fall back to griptape-nodes-library.json
+            logger.info("No .gitmodules found, falling back to griptape-nodes-library.json")
+            json_path = library_root / "griptape-nodes-library.json"
+            with json_path.open() as f:
+                data = json.load(f)
+            submodule_info = data["metadata"]["submodule_info"]
+            url = submodule_info["url"]
+            commit = submodule_info.get("commit")
+            logger.info(f"Cloning SAM3 from {url} (commit: {commit})...")
+            subprocess.run(
+                ["git", "clone", url, str(sam3_submodule_dir)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if commit:
+                subprocess.run(
+                    ["git", "-C", str(sam3_submodule_dir), "checkout", commit],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
 
-        # Verify submodule was initialized
+        # Verify the expected submodule directory is now populated
         if not sam3_submodule_dir.exists() or not any(sam3_submodule_dir.iterdir()):
             raise RuntimeError(
                 f"Submodule initialization failed: {sam3_submodule_dir} is empty or does not exist"

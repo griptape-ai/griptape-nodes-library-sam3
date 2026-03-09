@@ -28,15 +28,9 @@
         "--torch-backend=auto"
       ]
     },
-    "resources": {
-      "required": {
-        "compute": [
-          [
-            "cuda"
-          ],
-          "has_any"
-        ]
-      }
+    "submodule_info": {
+      "url": "https://github.com/facebookresearch/sam3.git",
+      "commit": "1daff5eb927cb37a3fd93879173001e451ab1795"
     }
   },
   "categories": [
