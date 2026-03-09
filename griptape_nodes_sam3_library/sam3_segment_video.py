@@ -530,9 +530,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
                 color = colors[obj_idx % len(colors)]
 
-                # Save individual mask frame (colored mask on black background)
+                # Save individual mask frame (white mask on black background)
                 mask_frame = np.zeros_like(frame)
-                mask_frame[mask > 0] = color
+                mask_frame[mask > 0] = (255, 255, 255)
                 mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
                 cv2.imwrite(str(mask_frame_path), mask_frame)
 
