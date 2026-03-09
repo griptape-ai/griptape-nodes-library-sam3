@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import requests
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact
-from PIL import Image
+from PIL import Image, ImageOps
 
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
@@ -307,23 +307,24 @@ class Sam3SegmentImage(SuccessFailureNode):
             raise
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact) -> Image.Image:
-        """Convert image artifact to PIL Image"""
+        """Convert image artifact to PIL Image, respecting EXIF orientation."""
         if isinstance(artifact, ImageUrlArtifact):
-            # For ImageUrlArtifact, we need to fetch the image
             response = requests.get(artifact.value)
-            return Image.open(BytesIO(response.content)).convert("RGB")
+            image = Image.open(BytesIO(response.content))
         elif isinstance(artifact, ImageArtifact):
-            # For ImageArtifact, get the image data
             # Handle different ways ImageArtifact might store data
             if hasattr(artifact, 'value') and isinstance(artifact.value, bytes):
-                return Image.open(BytesIO(artifact.value)).convert("RGB")
+                image = Image.open(BytesIO(artifact.value))
             elif hasattr(artifact, 'to_bytes'):
-                return Image.open(BytesIO(artifact.to_bytes())).convert("RGB")
+                image = Image.open(BytesIO(artifact.to_bytes()))
             else:
-                # Try to convert to bytes
-                return Image.open(BytesIO(bytes(artifact.value))).convert("RGB")
+                image = Image.open(BytesIO(bytes(artifact.value)))
         else:
             raise ValueError(f"Unsupported artifact type: {type(artifact)}")
+
+        # Apply EXIF orientation so portrait images aren't rotated in the output
+        image = ImageOps.exif_transpose(image)
+        return image.convert("RGB")
 
     def _pil_to_artifact(self, image: Image.Image) -> ImageUrlArtifact:
         """Convert PIL Image to ImageUrlArtifact"""
