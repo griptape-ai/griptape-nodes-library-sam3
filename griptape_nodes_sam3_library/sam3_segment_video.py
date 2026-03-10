@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 from griptape.artifacts import VideoUrlArtifact
 
+from griptape_nodes.files.file import File, FileLoadError
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
@@ -388,17 +389,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
         Returns (video_path, fps, frame_count)
         """
         import cv2
-        import requests
 
         # Get video data
         video_url = video_artifact.value
-        if video_url.startswith(("http://", "https://")):
-            response = requests.get(video_url)
-            video_data = response.content
-        else:
-            # Local file path
-            with open(video_url, "rb") as f:
-                video_data = f.read()
+        video_data = File(video_url).read_bytes()
 
         # Write to temp file for OpenCV
         temp_video = output_dir.parent / "input_video.mp4"
