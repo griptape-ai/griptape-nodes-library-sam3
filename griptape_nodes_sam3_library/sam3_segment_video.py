@@ -510,6 +510,19 @@ class Sam3SegmentVideo(SuccessFailureNode):
             # Load original frame
             frame_path = input_dir / f"{frame_idx:06d}.jpg"
             if not frame_path.exists():
+                # Create black frames for all mask videos for missing input frames
+                logger.warning(f"Frame {frame_idx}: Input frame not found. Creating black mask frames.")
+                for obj_idx in range(num_objects):
+                    # Use dimensions from first available frame or default
+                    if obj_idx < len(mask_frame_dirs):
+                        existing_frames = list(mask_frame_dirs[obj_idx].glob("*.jpg"))
+                        if existing_frames:
+                            ref_frame = cv2.imread(str(existing_frames[0]))
+                            black_frame = np.zeros_like(ref_frame)
+                        else:
+                            black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                        mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
+                        cv2.imwrite(str(mask_frame_path), black_frame)
                 continue
 
             frame = cv2.imread(str(frame_path))
@@ -517,7 +530,17 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
             # Get masks from output structure
             binary_masks = outputs.get("out_binary_masks")
+
+            # If no masks for this frame, create black mask frames for all objects
             if binary_masks is None:
+                for obj_idx in range(num_objects):
+                    if obj_idx < len(mask_frame_dirs):
+                        mask_frame = np.zeros_like(frame)
+                        mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
+                        cv2.imwrite(str(mask_frame_path), mask_frame)
+                # Save composite frame (original frame, no overlay)
+                composite_path = composite_dir / f"{frame_idx:06d}.jpg"
+                cv2.imwrite(str(composite_path), frame)
                 continue
 
             # Handle tensor on GPU if needed
@@ -531,34 +554,50 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 # Single mask, add object dimension
                 binary_masks = binary_masks[np.newaxis, ...]
             elif binary_masks.ndim != 3:
-                logger.warning(f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Skipping.")
+                logger.warning(f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Creating black mask frames.")
+                for obj_idx in range(num_objects):
+                    if obj_idx < len(mask_frame_dirs):
+                        mask_frame = np.zeros_like(frame)
+                        mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
+                        cv2.imwrite(str(mask_frame_path), mask_frame)
+                composite_path = composite_dir / f"{frame_idx:06d}.jpg"
+                cv2.imwrite(str(composite_path), frame)
                 continue
 
             # Process each object's mask
-            for obj_idx, mask in enumerate(binary_masks):
+            for obj_idx in range(num_objects):
                 if obj_idx >= len(mask_frame_dirs):
                     break
 
-                # Validate mask dimensions
-                if mask.shape[0] == 0 or mask.shape[1] == 0:
-                    logger.warning(f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Skipping.")
-                    continue
+                # Get mask for this object, or create black frame if not available
+                if obj_idx < len(binary_masks):
+                    mask = binary_masks[obj_idx]
 
-                # Resize mask to match frame if needed
-                if mask.shape[0] != frame.shape[0] or mask.shape[1] != frame.shape[1]:
-                    mask = cv2.resize(mask.astype(np.float32), (frame.shape[1], frame.shape[0]))
-                    mask = mask > 0.5
+                    # Validate mask dimensions
+                    if mask.shape[0] == 0 or mask.shape[1] == 0:
+                        logger.warning(f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Creating black frame.")
+                        mask_frame = np.zeros_like(frame)
+                    else:
+                        # Resize mask to match frame if needed
+                        if mask.shape[0] != frame.shape[0] or mask.shape[1] != frame.shape[1]:
+                            mask = cv2.resize(mask.astype(np.float32), (frame.shape[1], frame.shape[0]))
+                            mask = mask > 0.5
 
-                color = colors[obj_idx % len(colors)]
+                        color = colors[obj_idx % len(colors)]
 
-                # Save individual mask frame (white mask on black background)
-                mask_frame = np.zeros_like(frame)
-                mask_frame[mask > 0] = (255, 255, 255)
+                        # Save individual mask frame (white mask on black background)
+                        mask_frame = np.zeros_like(frame)
+                        mask_frame[mask > 0] = (255, 255, 255)
+
+                        # Apply to composite overlay
+                        overlay[mask > 0] = color
+                else:
+                    # Object not found in this frame, create black mask
+                    mask_frame = np.zeros_like(frame)
+
+                # Always save mask frame for every object in every frame
                 mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
                 cv2.imwrite(str(mask_frame_path), mask_frame)
-
-                # Apply to composite overlay
-                overlay[mask > 0] = color
 
             # Blend overlay with original frame for composite
             composite_frame = cv2.addWeighted(frame, 1 - opacity, overlay, opacity, 0)
