@@ -21,7 +21,8 @@
         "torch==2.7.0",
         "torchvision==0.22.0",
         "torchaudio==2.7.0",
-        "static_ffmpeg>=2.13.0"
+        "static_ffmpeg>=2.13.0",
+        "opencv-python-headless>=4.11.0.86"
       ],
       "pip_install_flags": [
         "--preview",

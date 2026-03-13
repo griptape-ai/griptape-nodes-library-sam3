@@ -29,12 +29,15 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         # Check if all dependencies are properly installed
         if self._check_dependencies_installed():
             logger.info("All SAM3 dependencies are already installed, skipping installation")
-            return
+        else:
+            logger.info("SAM3 or dependencies not found, beginning installation process...")
+            self._install_sam3_dependencies()
 
-        logger.info("SAM3 or dependencies not found, beginning installation process...")
-
-        # Install dependencies
-        self._install_sam3_dependencies()
+        # Always run — the SAM3 submodule pulls in opencv-python (GUI variant) as a transitive
+        # dependency. That variant requires libGL.so.1 which is absent in headless environments
+        # like Griptape Cloud. If both opencv-python and opencv-python-headless are installed,
+        # the GUI variant's cv2 .so files take precedence and cause an ImportError at runtime.
+        self._ensure_headless_opencv()
 
     def after_library_nodes_loaded(self, library_data: LibrarySchema, library: Library) -> None:
         """Called after all nodes have been loaded from the library."""
@@ -83,23 +86,40 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             logger.warning("PyTorch not available, skipping TF32 configuration")
 
     def _check_dependencies_installed(self) -> bool:
-        """Check if sam3 is installed. Debug log found versions."""
+        """Check if sam3 is installed. Log dependency versions."""
         try:
             # Check SAM3 package (the main dependency we install)
             sam3_version = version("sam3")
-            logger.debug(f"Found sam3 {sam3_version}")
+            logger.info(f"SAM3 dependency check: sam3 {sam3_version} found")
 
-            # Log other dependencies for debugging
+            # Log torch
             try:
                 import torch
-                logger.debug(f"Found torch {torch.__version__}, CUDA: {torch.version.cuda if torch.cuda.is_available() else 'N/A'}")
+                logger.info(f"SAM3 dependency check: torch {torch.__version__}, CUDA: {torch.version.cuda if torch.cuda.is_available() else 'N/A'}")
             except ImportError:
-                logger.debug("torch not found")
+                logger.info("SAM3 dependency check: torch not found")
+
+            # Log opencv variant - important for diagnosing libGL issues on headless environments
+            try:
+                opencv_gui_version = version("opencv-python")
+                logger.warning(
+                    f"SAM3 dependency check: opencv-python (GUI variant) {opencv_gui_version} is installed. "
+                    "This requires libGL.so.1 which is NOT available in headless environments like Griptape Cloud. "
+                    "This will cause 'ImportError: libGL.so.1: cannot open shared object file' at runtime."
+                )
+            except PackageNotFoundError:
+                pass
+
+            try:
+                opencv_headless_version = version("opencv-python-headless")
+                logger.info(f"SAM3 dependency check: opencv-python-headless {opencv_headless_version} is installed (correct for headless environments)")
+            except PackageNotFoundError:
+                logger.info("SAM3 dependency check: opencv-python-headless not found")
 
             return True
 
         except PackageNotFoundError:
-            logger.debug("sam3 not found")
+            logger.info("SAM3 dependency check: sam3 not found — full installation required")
             return False
 
     def _install_sam3_dependencies(self) -> None:
@@ -190,6 +210,52 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             if e.stderr:
                 logger.error(f"stderr: {e.stderr}")
             raise
+
+    def _run_pip_uninstall(self, packages: list[str]) -> None:
+        """Run pip uninstall -y with the given packages using the library's venv."""
+        python_path = self._get_venv_python_path()
+        cmd = [str(python_path), "-m", "pip", "uninstall", "-y"] + packages
+        logger.info(f"Running: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            if result.stdout:
+                logger.debug(result.stdout)
+            if result.stderr:
+                logger.debug(result.stderr)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"pip uninstall failed with exit code {e.returncode}")
+            if e.stdout:
+                logger.error(f"stdout: {e.stdout}")
+            if e.stderr:
+                logger.error(f"stderr: {e.stderr}")
+            raise
+
+    def _ensure_headless_opencv(self) -> None:
+        """Remove opencv-python (GUI variant) if present, ensuring only headless is installed.
+
+        The SAM3 submodule pulls in opencv-python as a transitive dependency. That package
+        links against libGL.so.1 at import time — even when no GUI features are used — which
+        causes an ImportError in headless environments like Griptape Cloud.
+
+        When both opencv-python and opencv-python-headless are installed, the GUI variant's
+        cv2 .so files take precedence. Uninstalling the GUI variant forces Python to use the
+        headless one, which provides an identical API without the libGL dependency.
+        """
+        try:
+            opencv_gui_version = version("opencv-python")
+            logger.warning(
+                f"Found opencv-python (GUI variant) {opencv_gui_version} alongside headless version — "
+                "GUI variant's cv2 .so files take precedence and will cause libGL.so.1 ImportError. "
+                "Uninstalling GUI variant and force-reinstalling headless to restore cv2 files..."
+            )
+            self._run_pip_uninstall(["opencv-python"])
+            # Force-reinstall headless after removing the GUI variant, because pip may have
+            # removed the shared cv2 .so files when uninstalling opencv-python (it owned them).
+            self._run_pip_install(["--force-reinstall", "opencv-python-headless>=4.11.0.86"])
+            logger.info("Successfully replaced opencv-python with opencv-python-headless.")
+        except PackageNotFoundError:
+            logger.info("opencv-python (GUI variant) not present — no action needed")
 
     def _init_submodules_from_gitmodules(self, gitmodules_path: Path) -> None:
         """Run git submodule update --init --recursive from the repo root.
@@ -308,3 +374,8 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             "--config-settings", "editable_mode=compat",
             "-e", f"{sam3_dir}[notebooks]"
         ])
+
+        # The SAM3 package pulls in opencv-python (GUI variant) as a transitive dependency.
+        # Swap it out immediately so the venv never has the GUI variant at rest.
+        self._ensure_headless_opencv()
+
