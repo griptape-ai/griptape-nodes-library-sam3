@@ -6,7 +6,6 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import pygit2
-
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
@@ -92,7 +91,10 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             # Log other dependencies for debugging
             try:
                 import torch
-                logger.debug(f"Found torch {torch.__version__}, CUDA: {torch.version.cuda if torch.cuda.is_available() else 'N/A'}")
+
+                logger.debug(
+                    f"Found torch {torch.__version__}, CUDA: {torch.version.cuda if torch.cuda.is_available() else 'N/A'}"
+                )
             except ImportError:
                 logger.debug("torch not found")
 
@@ -145,11 +147,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         python_path = self._get_venv_python_path()
 
         # Check if pip is available
-        result = subprocess.run(
-            [str(python_path), "-m", "pip", "--version"],
-            capture_output=True,
-            text=True
-        )
+        result = subprocess.run([str(python_path), "-m", "pip", "--version"], capture_output=True, text=True)
 
         if result.returncode == 0:
             logger.debug(f"pip already installed: {result.stdout.strip()}")
@@ -157,12 +155,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
 
         # pip not found, install it using ensurepip
         logger.info("pip not found in venv, installing with ensurepip...")
-        subprocess.run(
-            [str(python_path), "-m", "ensurepip", "--upgrade"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        subprocess.run([str(python_path), "-m", "ensurepip", "--upgrade"], check=True, capture_output=True, text=True)
         logger.info("pip installed successfully")
 
     def _run_pip_install(self, packages: list[str]) -> None:
@@ -172,12 +165,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         logger.info(f"Running: {' '.join(cmd)}")
 
         try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True
-            )
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
             if result.stdout:
                 logger.debug(result.stdout)
@@ -220,9 +208,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
 
         # Verify submodule was initialized
         if not sam3_submodule_dir.exists() or not any(sam3_submodule_dir.iterdir()):
-            raise RuntimeError(
-                f"Submodule initialization failed: {sam3_submodule_dir} is empty or does not exist"
-            )
+            raise RuntimeError(f"Submodule initialization failed: {sam3_submodule_dir} is empty or does not exist")
 
         return sam3_submodule_dir
 
@@ -237,7 +223,4 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         dependencies not listed in the base requirements.
         """
         # Use compat mode for editable install to create .pth file linking to source
-        self._run_pip_install([
-            "--config-settings", "editable_mode=compat",
-            "-e", f"{sam3_dir}[notebooks]"
-        ])
+        self._run_pip_install(["--config-settings", "editable_mode=compat", "-e", f"{sam3_dir}[notebooks]"])

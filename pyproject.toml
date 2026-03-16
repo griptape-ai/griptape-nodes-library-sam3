@@ -6,7 +6,7 @@ authors = [
     {name = "Your Name",email = "you@example.com"}
 ]
 readme = "README.md"
-requires-python = "~=3.12"
+requires-python = "~=3.12.0"
 dependencies = [
     "griptape-nodes",
     "pygit2",
@@ -17,6 +17,50 @@ dependencies = [
 [tool.uv.sources]
 griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
 
+[tool.hatch.build.targets.wheel]
+packages = ["griptape_nodes_sam3_library"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pyright>=1.1.396", "pytest-asyncio>=0.21.0", "ruff>=0.8.0", "pytest"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "W",  # pycodestyle warnings
+  "F",  # Pyflakes
+  "I",  # isort
+  "B",  # flake8-bugbear
+  "C4", # flake8-comprehensions
+  "UP", # pyupgrade
+]
+ignore = [
+  "E501", # line too long (handled by formatter)
+  "B008", # do not perform function calls in argument defaults
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["."]
+exclude = [".venv", "**/node_modules", "**/__pycache__", "**/.*", "templates"]
+pythonVersion = "3.12"
+reportIncompatibleMethodOverride = false
+reportMissingImports = false
+reportMissingModuleSource = false
+reportAttributeAccessIssue = false
+reportOptionalMemberAccess = false
+reportPossiblyUnboundVariable = false
