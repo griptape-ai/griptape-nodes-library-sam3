@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from io import BytesIO
 from typing import Any
 
@@ -8,12 +7,11 @@ import numpy as np
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact
 from PIL import Image
 
-from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
-
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
+from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.traits.slider import Slider
 
 from griptape_nodes.files.file import File, FileLoadError
@@ -119,6 +117,13 @@ class Sam3SegmentImage(SuccessFailureNode):
             result_details_tooltip="Details about the segmentation operation result",
             result_details_placeholder="Segmentation results will appear here.",
         )
+
+        self._output_file = ProjectFileParameter(
+            self,
+            parameter_name="output_file",
+            default_value="segmented_image.png",
+        )
+        self._output_file.add_input_parameters()
 
         # Model caching
         self._model = None
@@ -330,9 +335,9 @@ class Sam3SegmentImage(SuccessFailureNode):
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
-        filename = f"{uuid.uuid4()}.png"
-        url = GriptapeNodes.StaticFilesManager().save_static_file(image_bytes, filename)
-        return ImageUrlArtifact(url)
+        saved = self._output_file.build_file()
+        saved.write_bytes(image_bytes)
+        return ImageUrlArtifact(saved.location)
 
     def _mask_to_image(self, mask: Any) -> Image.Image:
         """Convert mask array to PIL Image"""
