@@ -105,7 +105,7 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
                 logger.warning(
                     f"SAM3 dependency check: opencv-python (GUI variant) {opencv_gui_version} is installed. "
                     "This requires libGL.so.1 which is NOT available in headless environments like Griptape Cloud. "
-                    "This will cause 'ImportError: libGL.so.1: cannot open shared object file' at runtime."
+                    "This will cause 'ImportError: libGL.so.1: cannot open shared object file' at runtime if running in Griptape Cloud."
                 )
             except PackageNotFoundError:
                 pass
@@ -242,6 +242,20 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         cv2 .so files take precedence. Uninstalling the GUI variant forces Python to use the
         headless one, which provides an identical API without the libGL dependency.
         """
+        import ctypes
+        import platform
+
+        if platform.system() != "Linux":
+            logger.info("Non-Linux platform — skipping headless opencv check.")
+            return
+
+        try:
+            ctypes.CDLL("libGL.so.1")
+            logger.info("libGL.so.1 found — not a headless environment, skipping opencv variant check.")
+            return
+        except OSError:
+            logger.info("libGL.so.1 not found — headless environment confirmed, checking opencv variant.")
+
         try:
             opencv_gui_version = version("opencv-python")
             logger.warning(
@@ -376,6 +390,6 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         ])
 
         # The SAM3 package pulls in opencv-python (GUI variant) as a transitive dependency.
-        # Swap it out immediately so the venv never has the GUI variant at rest.
+        # Swap it out immediately so the venv never has the wrong variant at rest.
         self._ensure_headless_opencv()
 

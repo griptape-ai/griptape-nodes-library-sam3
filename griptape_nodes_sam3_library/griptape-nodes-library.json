@@ -25,8 +25,8 @@
         "opencv-python-headless>=4.11.0.86"
       ],
       "pip_install_flags": [
-        "--preview",
-        "--torch-backend=auto"
+        "--extra-index-url",
+        "https://download.pytorch.org/whl/cu128"
       ]
     },
     "submodule_info": {
