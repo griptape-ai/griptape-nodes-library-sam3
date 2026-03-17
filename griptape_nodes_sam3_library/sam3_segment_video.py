@@ -129,11 +129,11 @@ class Sam3SegmentVideo(SuccessFailureNode):
         )
 
         self._output_file = ProjectFileParameter(
-            self,
-            parameter_name="output_file",
-            default_value="segmented_video.mp4",
+            node=self,
+            name="output_file",
+            default_filename="segmented_video.mp4",
         )
-        self._output_file.add_input_parameters()
+        self._output_file.add_parameter()
 
         # Model caching
         self._predictor = None
@@ -629,6 +629,5 @@ class Sam3SegmentVideo(SuccessFailureNode):
     def _video_to_artifact(self, video_path: Path):
         """Convert video file to VideoUrlArtifact."""
         video_bytes = video_path.read_bytes()
-        saved = self._output_file.build_file()
-        saved.write_bytes(video_bytes)
-        return VideoUrlArtifact(saved.location)
+        saved = self._output_file.build_file().write_bytes(video_bytes)
+        return VideoUrlArtifact(value=saved.location)

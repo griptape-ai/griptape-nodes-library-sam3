@@ -119,11 +119,11 @@ class Sam3SegmentImage(SuccessFailureNode):
         )
 
         self._output_file = ProjectFileParameter(
-            self,
-            parameter_name="output_file",
-            default_value="segmented_image.png",
+            node=self,
+            name="output_file",
+            default_filename="segmented_image.png",
         )
-        self._output_file.add_input_parameters()
+        self._output_file.add_parameter()
 
         # Model caching
         self._model = None
@@ -335,9 +335,8 @@ class Sam3SegmentImage(SuccessFailureNode):
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
-        saved = self._output_file.build_file()
-        saved.write_bytes(image_bytes)
-        return ImageUrlArtifact(saved.location)
+        saved = self._output_file.build_file().write_bytes(image_bytes)
+        return ImageUrlArtifact(value=saved.location)
 
     def _mask_to_image(self, mask: Any) -> Image.Image:
         """Convert mask array to PIL Image"""
