@@ -2,7 +2,6 @@ import asyncio
 import logging
 import shutil
 import tempfile
-import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -12,12 +11,11 @@ from PIL import Image
 from griptape.artifacts import VideoUrlArtifact
 
 from griptape_nodes.files.file import File, FileLoadError
-from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
-
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
+from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.traits.slider import Slider
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
@@ -129,6 +127,13 @@ class Sam3SegmentVideo(SuccessFailureNode):
             result_details_tooltip="Details about the video segmentation operation result",
             result_details_placeholder="Segmentation results will appear here.",
         )
+
+        self._output_file = ProjectFileParameter(
+            node=self,
+            name="output_file",
+            default_filename="segmented_video.mp4",
+        )
+        self._output_file.add_parameter()
 
         # Model caching
         self._predictor = None
@@ -623,8 +628,6 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
     def _video_to_artifact(self, video_path: Path):
         """Convert video file to VideoUrlArtifact."""
-
         video_bytes = video_path.read_bytes()
-        filename = f"{uuid.uuid4()}.mp4"
-        url = GriptapeNodes.StaticFilesManager().save_static_file(video_bytes, filename)
-        return VideoUrlArtifact(url)
+        saved = self._output_file.build_file().write_bytes(video_bytes)
+        return VideoUrlArtifact(value=saved.location)
