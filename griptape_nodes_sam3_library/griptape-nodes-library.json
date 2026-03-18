@@ -1,6 +1,6 @@
 {
   "name": "SAM3 Library",
-  "library_schema_version": "0.3.0",
+  "library_schema_version": "0.4.0",
   "advanced_library_path": "sam3_library_advanced.py",
   "metadata": {
     "author": "griptape-ai",
@@ -28,6 +28,16 @@
         "--extra-index-url",
         "https://download.pytorch.org/whl/cu128"
       ]
+    },
+    "resources": {
+      "required": {
+        "compute": [
+          [
+            "cuda"
+          ],
+          "has_any"
+        ]
+      }
     },
     "submodule_info": {
       "url": "https://github.com/facebookresearch/sam3.git",
