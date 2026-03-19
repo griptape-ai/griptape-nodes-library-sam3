@@ -5,16 +5,14 @@ from typing import Any
 
 import numpy as np
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact
-from PIL import Image
-
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
+from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
-
-from griptape_nodes.files.file import File, FileLoadError
+from PIL import Image
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
 
@@ -206,8 +204,10 @@ class Sam3SegmentImage(SuccessFailureNode):
                 mask_img = self._mask_to_image(mask)
                 mask_artifact = self._pil_to_artifact(mask_img)
                 mask_artifacts.append(mask_artifact)
-                score_val = filtered_scores[i].item() if hasattr(filtered_scores[i], 'item') else float(filtered_scores[i])
-                self.log_params.append_to_logs(f"Mask {i+1}: score={score_val:.3f}\n")
+                score_val = (
+                    filtered_scores[i].item() if hasattr(filtered_scores[i], "item") else float(filtered_scores[i])
+                )
+                self.log_params.append_to_logs(f"Mask {i + 1}: score={score_val:.3f}\n")
 
             # Create composite image with all masks overlaid
             composite_image = self._create_composite(input_image, filtered_masks)
@@ -264,9 +264,11 @@ class Sam3SegmentImage(SuccessFailureNode):
             # Force garbage collection and clear CUDA cache
             try:
                 import gc
+
                 gc.collect()
 
                 import torch
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
@@ -285,6 +287,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         # aren't processed when running from griptape-nodes' venv)
         import sys
         from pathlib import Path
+
         sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
         if sam3_repo_path not in sys.path:
             sys.path.insert(0, sam3_repo_path)
@@ -320,9 +323,9 @@ class Sam3SegmentImage(SuccessFailureNode):
         elif isinstance(artifact, ImageArtifact):
             # For ImageArtifact, get the image data
             # Handle different ways ImageArtifact might store data
-            if hasattr(artifact, 'value') and isinstance(artifact.value, bytes):
+            if hasattr(artifact, "value") and isinstance(artifact.value, bytes):
                 return Image.open(BytesIO(artifact.value)).convert("RGB")
-            elif hasattr(artifact, 'to_bytes'):
+            elif hasattr(artifact, "to_bytes"):
                 return Image.open(BytesIO(artifact.to_bytes())).convert("RGB")
             else:
                 # Try to convert to bytes
@@ -343,7 +346,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         # Convert mask to numpy array if it isn't already
         if not isinstance(mask, np.ndarray):
             # Handle PyTorch tensors (may be on GPU)
-            if hasattr(mask, 'cpu'):
+            if hasattr(mask, "cpu"):
                 mask = mask.cpu().numpy()
             else:
                 mask = np.array(mask)
@@ -364,9 +367,9 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         # Color palette for different masks
         colors = [
-            (255, 0, 0, 100),    # Red
-            (0, 255, 0, 100),    # Green
-            (0, 0, 255, 100),    # Blue
+            (255, 0, 0, 100),  # Red
+            (0, 255, 0, 100),  # Green
+            (0, 0, 255, 100),  # Blue
             (255, 255, 0, 100),  # Yellow
             (255, 0, 255, 100),  # Magenta
             (0, 255, 255, 100),  # Cyan
@@ -378,7 +381,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             # Convert mask to numpy array
             if not isinstance(mask, np.ndarray):
                 # Handle PyTorch tensors (may be on GPU)
-                if hasattr(mask, 'cpu'):
+                if hasattr(mask, "cpu"):
                     mask = mask.cpu().numpy()
                 else:
                     mask = np.array(mask)
