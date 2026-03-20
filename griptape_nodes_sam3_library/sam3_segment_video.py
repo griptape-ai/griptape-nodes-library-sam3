@@ -2,20 +2,17 @@ import asyncio
 import logging
 import shutil
 import tempfile
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
 from griptape.artifacts import VideoUrlArtifact
-
-from griptape_nodes.files.file import File, FileLoadError
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
+from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
@@ -195,7 +192,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
             # Validate prompt_frame
             if prompt_frame >= frame_count:
                 prompt_frame = 0
-                self.log_params.append_to_logs(f"Prompt frame adjusted to 0 (was >= frame count)\n")
+                self.log_params.append_to_logs("Prompt frame adjusted to 0 (was >= frame count)\n")
 
             # Load or initialize model
             # Note: SAM3 video predictor uses torch.distributed internally,
@@ -205,22 +202,22 @@ class Sam3SegmentVideo(SuccessFailureNode):
             # Start video session
             self.log_params.append_to_logs("Starting video session...\n")
             response = self._predictor.handle_request(
-                request=dict(
-                    type="start_session",
-                    resource_path=str(frames_dir),
-                )
+                request={
+                    "type": "start_session",
+                    "resource_path": str(frames_dir),
+                }
             )
             session_id = response["session_id"]
 
             # Add text prompt
             self.log_params.append_to_logs(f"Adding prompt '{text_prompt}' at frame {prompt_frame}...\n")
             prompt_response = self._predictor.handle_request(
-                request=dict(
-                    type="add_prompt",
-                    session_id=session_id,
-                    frame_index=prompt_frame,
-                    text=text_prompt,
-                )
+                request={
+                    "type": "add_prompt",
+                    "session_id": session_id,
+                    "frame_index": prompt_frame,
+                    "text": text_prompt,
+                }
             )
 
             # Get number of objects found from initial prompt
@@ -246,7 +243,11 @@ class Sam3SegmentVideo(SuccessFailureNode):
             mask_artifacts = []
             mask_frame_dirs = await asyncio.to_thread(
                 self._create_masked_frames_multi,
-                frames_dir, outputs_per_frame, composite_frames_dir, temp_dir, mask_opacity,
+                frames_dir,
+                outputs_per_frame,
+                composite_frames_dir,
+                temp_dir,
+                mask_opacity,
             )
 
             # Encode individual mask videos (directly to H.264)
@@ -264,10 +265,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
             # Close session
             self._predictor.handle_request(
-                request=dict(
-                    type="close_session",
-                    session_id=session_id,
-                )
+                request={
+                    "type": "close_session",
+                    "session_id": session_id,
+                }
             )
             session_id = None
 
@@ -322,9 +323,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 # Close session first to free GPU resources
                 if session_id is not None:
                     try:
-                        self._predictor.handle_request(
-                            request=dict(type="close_session", session_id=session_id)
-                        )
+                        self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
                         self.log_params.append_to_logs("Session closed\n")
                     except Exception:
                         pass
@@ -341,9 +340,11 @@ class Sam3SegmentVideo(SuccessFailureNode):
             # Force garbage collection and clear CUDA cache
             try:
                 import gc
+
                 gc.collect()
 
                 import torch
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
@@ -360,6 +361,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         # Add _sam3_repo to sys.path if not present
         import sys
+
         sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
         if sam3_repo_path not in sys.path:
             sys.path.insert(0, sam3_repo_path)
@@ -454,10 +456,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
         outputs_per_frame = {}
 
         for response in self._predictor.handle_stream_request(
-            request=dict(
-                type="propagate_in_video",
-                session_id=session_id,
-            )
+            request={
+                "type": "propagate_in_video",
+                "session_id": session_id,
+            }
         ):
             outputs_per_frame[response["frame_index"]] = response["outputs"]
 
@@ -475,9 +477,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         # Color palette for different objects
         colors = [
-            (255, 0, 0),    # Red
-            (0, 255, 0),    # Green
-            (0, 0, 255),    # Blue
+            (255, 0, 0),  # Red
+            (0, 255, 0),  # Green
+            (0, 0, 255),  # Blue
             (255, 255, 0),  # Yellow
             (255, 0, 255),  # Magenta
             (0, 255, 255),  # Cyan
@@ -490,7 +492,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
         for outputs in outputs_per_frame.values():
             binary_masks = outputs.get("out_binary_masks")
             if binary_masks is not None:
-                if hasattr(binary_masks, 'cpu'):
+                if hasattr(binary_masks, "cpu"):
                     binary_masks = binary_masks.cpu().numpy()
                 elif not isinstance(binary_masks, np.ndarray):
                     binary_masks = np.array(binary_masks)
@@ -549,7 +551,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 continue
 
             # Handle tensor on GPU if needed
-            if hasattr(binary_masks, 'cpu'):
+            if hasattr(binary_masks, "cpu"):
                 binary_masks = binary_masks.cpu().numpy()
             elif not isinstance(binary_masks, np.ndarray):
                 binary_masks = np.array(binary_masks)
@@ -559,7 +561,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 # Single mask, add object dimension
                 binary_masks = binary_masks[np.newaxis, ...]
             elif binary_masks.ndim != 3:
-                logger.warning(f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Creating black mask frames.")
+                logger.warning(
+                    f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Creating black mask frames."
+                )
                 for obj_idx in range(num_objects):
                     if obj_idx < len(mask_frame_dirs):
                         mask_frame = np.zeros_like(frame)
@@ -580,7 +584,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
                     # Validate mask dimensions
                     if mask.shape[0] == 0 or mask.shape[1] == 0:
-                        logger.warning(f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Creating black frame.")
+                        logger.warning(
+                            f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Creating black frame."
+                        )
                         mask_frame = np.zeros_like(frame)
                     else:
                         # Resize mask to match frame if needed
@@ -626,10 +632,14 @@ class Sam3SegmentVideo(SuccessFailureNode):
         # Use ffmpeg to encode frames directly to H.264
         process = await asyncio.create_subprocess_exec(
             ffmpeg_path,
-            "-framerate", str(fps),
-            "-i", str(frames_dir / "%06d.jpg"),
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
+            "-framerate",
+            str(fps),
+            "-i",
+            str(frames_dir / "%06d.jpg"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
             "-y",
             str(output_path),
             stdout=asyncio.subprocess.PIPE,
