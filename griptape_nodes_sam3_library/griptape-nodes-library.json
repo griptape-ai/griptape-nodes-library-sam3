@@ -1,6 +1,6 @@
 {
   "name": "SAM3 Library",
-  "library_schema_version": "0.3.0",
+  "library_schema_version": "0.4.0",
   "advanced_library_path": "sam3_library_advanced.py",
   "metadata": {
     "author": "griptape-ai",
@@ -21,11 +21,12 @@
         "torch==2.7.0",
         "torchvision==0.22.0",
         "torchaudio==2.7.0",
-        "static_ffmpeg>=2.13.0"
+        "static_ffmpeg>=2.13.0",
+        "opencv-python-headless>=4.11.0.86"
       ],
       "pip_install_flags": [
-        "--preview",
-        "--torch-backend=auto"
+        "--extra-index-url",
+        "https://download.pytorch.org/whl/cu128"
       ]
     },
     "resources": {
@@ -37,6 +38,10 @@
           "has_any"
         ]
       }
+    },
+    "submodule_info": {
+      "url": "https://github.com/facebookresearch/sam3.git",
+      "commit": "1daff5eb927cb37a3fd93879173001e451ab1795"
     }
   },
   "categories": [

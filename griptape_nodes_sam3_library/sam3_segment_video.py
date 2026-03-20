@@ -370,11 +370,27 @@ class Sam3SegmentVideo(SuccessFailureNode):
             import torch
             from sam3.model_builder import build_sam3_video_predictor
 
+            # Log GPU/CUDA diagnostic info to help debug cloud deployment issues
+            cuda_available = torch.cuda.is_available()
+            device_count = torch.cuda.device_count() if cuda_available else 0
+            self.log_params.append_to_logs(
+                f"GPU diagnostics: torch={torch.__version__}, "
+                f"cuda_built={torch.version.cuda}, "
+                f"cuda_available={cuda_available}, "
+                f"device_count={device_count}\n"
+            )
+            if cuda_available:
+                for i in range(device_count):
+                    self.log_params.append_to_logs(f"  GPU {i}: {torch.cuda.get_device_name(i)}\n")
+
             # Get available GPUs
-            gpus_to_use = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+            gpus_to_use = list(range(device_count))
 
             if not gpus_to_use:
-                self.log_params.append_to_logs("Warning: No GPU available, using CPU (will be slow)\n")
+                self.log_params.append_to_logs(
+                    "No GPU available. SAM3 video segmentation requires a GPU. "
+                    "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
+                )
 
             # Build the video predictor
             self._predictor = build_sam3_video_predictor(gpus_to_use=gpus_to_use)
@@ -395,7 +411,21 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         Returns (video_path, fps, frame_count)
         """
-        import cv2
+        try:
+            import cv2
+
+            self.log_params.append_to_logs(
+                f"cv2 loaded successfully (version: {getattr(cv2, '__version__', 'unknown')})\n"
+            )
+        except ImportError as e:
+            msg = (
+                f"Failed to import cv2: {e}\n"
+                "This is likely caused by opencv-python (GUI variant) being installed instead of "
+                "opencv-python-headless. The GUI variant requires libGL.so.1 which is not available "
+                "in headless environments. Check the SAM3 library setup logs for details."
+            )
+            self.log_params.append_to_logs(msg + "\n")
+            raise ImportError(msg) from e
 
         # Get video data
         video_url = video_artifact.value
