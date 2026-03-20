@@ -115,7 +115,9 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
 
             try:
                 opencv_headless_version = version("opencv-python-headless")
-                logger.info(f"SAM3 dependency check: opencv-python-headless {opencv_headless_version} is installed (correct for headless environments)")
+                logger.info(
+                    f"SAM3 dependency check: opencv-python-headless {opencv_headless_version} is installed (correct for headless environments)"
+                )
             except PackageNotFoundError:
                 logger.info("SAM3 dependency check: opencv-python-headless not found")
 
@@ -376,4 +378,3 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         # The SAM3 package pulls in opencv-python (GUI variant) as a transitive dependency.
         # Swap it out immediately so the venv never has the wrong variant at rest.
         self._ensure_headless_opencv()
-

@@ -413,7 +413,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
         """
         try:
             import cv2
-            self.log_params.append_to_logs(f"cv2 loaded successfully (version: {getattr(cv2, '__version__', 'unknown')})\n")
+
+            self.log_params.append_to_logs(
+                f"cv2 loaded successfully (version: {getattr(cv2, '__version__', 'unknown')})\n"
+            )
         except ImportError as e:
             msg = (
                 f"Failed to import cv2: {e}\n"
