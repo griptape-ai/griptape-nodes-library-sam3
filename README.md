@@ -1,17 +1,19 @@
-# Griptape Nodes: SAM3 Library
+# Griptape Nodes: SAM3/SAM3.1 Library
 
-Segment anything in images and videos using Meta's SAM3 (Segment Anything with Concepts) within Griptape Nodes. Use natural language text prompts to identify and segment specific objects with state-of-the-art AI segmentation.
+Segment anything in images and videos using Meta's SAM3 and SAM3.1 (Segment Anything with Concepts) within Griptape Nodes. Use natural language text prompts to identify and segment specific objects with state-of-the-art AI segmentation.
 
 ## Features
 
 - **Text-Based Segmentation**: Describe what you want to segment using natural language (e.g., "person", "car", "dog")
 - **Image Segmentation**: Segment objects in single images with high precision
 - **Video Segmentation**: Track and segment objects across video frames automatically
+- **SAM3.1 Object Multiplex**: ~7x faster multi-object tracking with shared memory architecture
 - **Multi-Object Support**: Segment multiple objects of the same type in a single pass
 - **Colored Mask Overlays**: Visualize segmentation results with customizable colored overlays
 - **Confidence Filtering**: Filter results by confidence score threshold
 - **HuggingFace Integration**: Automatic model downloading from HuggingFace Hub
 - **GPU Acceleration**: CUDA support with TF32 optimization for Ampere+ GPUs
+- **torch.compile Support**: Optional compilation for ~31 FPS on H100 (SAM3.1)
 
 ## Installation
 
@@ -78,13 +80,15 @@ CC
    * Close the Settings Panel
    * Click on *Refresh Libraries*
 
-3. **Verify installation** by checking that the "SAM3 Segment Image" and "SAM3 Segment Video" nodes appear in your Griptape Nodes interface in the "SAM3" category.
+3. **Verify installation** by checking that the "SAM3 Segment Image", "SAM3 Segment Video", and "SAM3.1 Multiplex Video" nodes appear in your Griptape Nodes interface in the "SAM3" category.
 
 ## HuggingFace Token Setup
 
-SAM3 requires access to the gated model on HuggingFace:
+SAM3/SAM3.1 requires access to the gated models on HuggingFace:
 
-1. **Request access** to the SAM3 model at [facebook/sam3](https://huggingface.co/facebook/sam3)
+1. **Request access** to the SAM3 models:
+   - [facebook/sam3](https://huggingface.co/facebook/sam3) - Base SAM3 model
+   - [facebook/sam3.1](https://huggingface.co/facebook/sam3.1) - SAM3.1 with Object Multiplex (recommended)
 2. **Get your HuggingFace token** from [HuggingFace Settings](https://huggingface.co/settings/tokens)
 3. **Configure the token** in Griptape Nodes:
    * Open the *Settings* menu and navigate to *Model Management*
@@ -126,6 +130,25 @@ SAM3 requires access to the gated model on HuggingFace:
 - `num_frames_processed`: Total frames processed
 - `num_objects_found`: Number of objects tracked
 
+### SAM3.1 Multiplex Video Segmentation (NEW)
+
+The SAM3.1 Multiplex Video node uses Object Multiplex for ~7x faster multi-object tracking:
+
+1. **Add the "SAM3.1 Multiplex Video" node** to your workflow
+2. **Connect a video** to the `input_video` input
+3. **Enter text prompts** for multiple objects (comma-separated, e.g., "person, car, dog")
+4. **Configure optional settings**:
+   - `prompt_frame`: Frame index to apply the initial prompts (default: 0)
+   - `mask_opacity`: Opacity of mask overlays (0.0-1.0)
+   - `use_torch_compile`: Enable for ~31 FPS on H100 (requires initial compilation time)
+5. **Run the node** to generate a video with segmentation masks
+
+**Outputs:**
+- `output_masks`: List of individual mask videos (one per object)
+- `output_composite`: Video with all colored mask overlays
+- `num_frames_processed`: Total frames processed
+- `num_objects_found`: Number of objects tracked
+
 ## Node Parameters
 
 ### SAM3 Segment Image
@@ -145,6 +168,16 @@ SAM3 requires access to the gated model on HuggingFace:
 | `text_prompt` | String | Description of objects to segment | Required |
 | `prompt_frame` | Integer | Frame index for initial prompt | 0 |
 | `mask_opacity` | Float | Mask overlay opacity (0.0-1.0) | 0.4 |
+
+### SAM3.1 Multiplex Video (NEW)
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `input_video` | VideoUrlArtifact | Input video to segment | Required |
+| `text_prompts` | String | Comma-separated list of objects to segment | Required |
+| `prompt_frame` | Integer | Frame index for initial prompts | 0 |
+| `mask_opacity` | Float | Mask overlay opacity (0.0-1.0) | 0.4 |
+| `use_torch_compile` | Boolean | Enable torch.compile for faster inference | false |
 
 ## Use Cases
 
@@ -181,6 +214,12 @@ SAM3 (Segment Anything with Concepts) extends the original SAM architecture with
 - Concept-aware segmentation for natural language queries
 - Video propagation for temporal consistency across frames
 - Multi-GPU support for efficient inference
+
+SAM3.1 adds Object Multiplex architecture:
+- Shared-memory approach for joint multi-object tracking
+- ~7x speedup at 128 objects on a single H100 GPU
+- Batches objects into fixed-capacity buckets (16 objects per bucket)
+- Flash Attention 3 and torch.compile support (~31 FPS compiled)
 
 ### Performance Optimization
 

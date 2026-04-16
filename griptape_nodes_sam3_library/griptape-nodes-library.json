@@ -4,17 +4,19 @@
   "advanced_library_path": "sam3_library_advanced.py",
   "metadata": {
     "author": "griptape-ai",
-    "description": "SAM3 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts",
-    "library_version": "0.2.5",
-    "engine_version": "0.75.0",
+    "description": "SAM3/SAM3.1 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts. SAM3.1 includes Object Multiplex for ~7x faster multi-object tracking.",
+    "library_version": "0.3.0",
+    "engine_version": "0.80.0",
     "tags": [
       "Griptape",
       "AI",
       "SAM3",
+      "SAM3.1",
       "Image Segmentation",
       "Video Segmentation",
       "Computer Vision",
-      "Meta"
+      "Meta",
+      "Object Multiplex"
     ],
     "dependencies": {
       "pip_dependencies": [
@@ -41,7 +43,7 @@
     },
     "submodule_info": {
       "url": "https://github.com/facebookresearch/sam3.git",
-      "commit": "1daff5eb927cb37a3fd93879173001e451ab1795"
+      "commit": "967fdd651f71ca14949122fed4c918a778ca9334"
     }
   },
   "categories": [
@@ -68,7 +70,7 @@
       "file_path": "sam3_segment_image.py",
       "metadata": {
         "category": "image/segmentation",
-        "description": "Segment objects in images using SAM3 with text prompts",
+        "description": "Segment objects in images using SAM3/SAM3.1 with text prompts",
         "display_name": "SAM3 Segment Image"
       }
     },
@@ -79,6 +81,15 @@
         "category": "video/segmentation",
         "description": "Segment objects in videos using SAM3 with text prompts",
         "display_name": "SAM3 Segment Video"
+      }
+    },
+    {
+      "class_name": "Sam3MultiplexVideo",
+      "file_path": "sam3_multiplex_video.py",
+      "metadata": {
+        "category": "video/segmentation",
+        "description": "Segment and track multiple objects in videos using SAM3.1 Object Multiplex (~7x faster multi-object tracking)",
+        "display_name": "SAM3.1 Multiplex Video"
       }
     }
   ]

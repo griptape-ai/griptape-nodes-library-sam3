@@ -30,9 +30,10 @@ class Sam3SegmentImage(SuccessFailureNode):
         super().__init__(name, metadata)
 
         # Model selection parameter (triggers model manager if not downloaded)
+        # SAM3.1 includes Object Multiplex for faster multi-object tracking
         self._model_repo_parameter = HuggingFaceRepoParameter(
             self,
-            repo_ids=["facebook/sam3"],
+            repo_ids=["facebook/sam3.1", "facebook/sam3"],
             parameter_name="model",
         )
         self._model_repo_parameter.add_input_parameters()
