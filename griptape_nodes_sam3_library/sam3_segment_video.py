@@ -249,6 +249,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 composite_frames_dir,
                 temp_dir,
                 mask_opacity,
+                num_objects,
             )
 
             # Encode individual mask videos (directly to H.264)
@@ -470,7 +471,13 @@ class Sam3SegmentVideo(SuccessFailureNode):
         return outputs_per_frame
 
     def _create_masked_frames_multi(
-        self, input_dir: Path, outputs_per_frame: dict, composite_dir: Path, temp_dir: Path, opacity: float
+        self,
+        input_dir: Path,
+        outputs_per_frame: dict,
+        composite_dir: Path,
+        temp_dir: Path,
+        opacity: float,
+        num_objects: int,
     ) -> list[Path]:
         """Create individual mask frame directories and composite frames.
 
@@ -491,23 +498,8 @@ class Sam3SegmentVideo(SuccessFailureNode):
             (128, 0, 255),  # Purple
         ]
 
-        # Determine number of objects from first frame with masks
-        num_objects = 0
-        for outputs in outputs_per_frame.values():
-            binary_masks = outputs.get("out_binary_masks")
-            if binary_masks is not None:
-                if hasattr(binary_masks, "cpu"):
-                    binary_masks = binary_masks.cpu().numpy()
-                elif not isinstance(binary_masks, np.ndarray):
-                    binary_masks = np.array(binary_masks)
-                if binary_masks.ndim == 2:
-                    num_objects = 1
-                elif binary_masks.ndim == 3:
-                    num_objects = binary_masks.shape[0]
-                break
-
         if num_objects == 0:
-            logger.warning("No masks found in any frame")
+            logger.warning("No objects found during initial prompt")
             return []
 
         # Create directories for each object's mask frames
