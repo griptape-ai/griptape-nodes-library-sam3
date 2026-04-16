@@ -471,7 +471,13 @@ class Sam3SegmentVideo(SuccessFailureNode):
         return outputs_per_frame
 
     def _create_masked_frames_multi(
-        self, input_dir: Path, outputs_per_frame: dict, composite_dir: Path, temp_dir: Path, opacity: float, num_objects: int
+        self,
+        input_dir: Path,
+        outputs_per_frame: dict,
+        composite_dir: Path,
+        temp_dir: Path,
+        opacity: float,
+        num_objects: int,
     ) -> list[Path]:
         """Create individual mask frame directories and composite frames.
 
