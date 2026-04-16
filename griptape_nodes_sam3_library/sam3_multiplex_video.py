@@ -15,26 +15,30 @@ from griptape_nodes.exe_types.param_components.project_file_parameter import Pro
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
 
-# SAM3 imports are done lazily in _load_model() to allow installation first
-
 logger = logging.getLogger("sam3_nodes_library")
 
 
-class Sam3SegmentVideo(SuccessFailureNode):
-    """SAM3 Video Segmentation Node
+class Sam3MultiplexVideo(SuccessFailureNode):
+    """SAM3.1 Multiplex Video Segmentation Node
 
-    Segments objects in videos using SAM3 (Segment Anything with Concepts)
-    with text prompts to identify and segment specific objects across frames.
+    Segments and tracks multiple objects in videos using SAM3.1 Object Multiplex.
+    Object Multiplex groups objects into fixed-capacity buckets (16 objects per bucket)
+    and processes them jointly, providing ~7x speedup for multi-object tracking
+    compared to SAM3's per-object inference.
+
+    Features:
+    - Text prompts for initial object detection
+    - Efficient multi-object tracking with shared memory architecture
+    - ~31 FPS on H100 with torch.compile
     """
 
     def __init__(self, name: str, metadata: dict[Any, Any] | None = None) -> None:
         super().__init__(name, metadata)
 
-        # Model selection parameter (triggers model manager if not downloaded)
-        # Use SAM3.1 Multiplex Video node for faster multi-object tracking with SAM3.1
+        # Model selection parameter - SAM3.1 required for multiplex
         self._model_repo_parameter = HuggingFaceRepoParameter(
             self,
-            repo_ids=["facebook/sam3.1", "facebook/sam3"],
+            repo_ids=["facebook/sam3.1"],
             parameter_name="model",
         )
         self._model_repo_parameter.add_input_parameters()
@@ -51,11 +55,11 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         self.add_parameter(
             Parameter(
-                name="text_prompt",
-                input_types=["str"],
+                name="text_prompts",
+                input_types=["str", "list[str]"],
                 type="str",
                 default_value="",
-                tooltip="Text prompt describing what to segment (e.g., 'person', 'car', 'dog')",
+                tooltip="Text prompts describing objects to segment. Use comma-separated values for multiple objects (e.g., 'person, car, dog')",
             )
         )
 
@@ -65,7 +69,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 input_types=["int"],
                 type="int",
                 default_value=0,
-                tooltip="Frame index to apply the initial prompt (0 = first frame)",
+                tooltip="Frame index to apply the initial prompts (0 = first frame)",
             )
         )
 
@@ -77,6 +81,16 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 default_value=0.4,
                 tooltip="Opacity of the mask overlay (0.0 to 1.0)",
                 traits={Slider(min_val=0.0, max_val=1.0)},
+            )
+        )
+
+        self.add_parameter(
+            Parameter(
+                name="use_torch_compile",
+                input_types=["bool"],
+                type="bool",
+                default_value=False,
+                tooltip="Enable torch.compile for faster inference (~31 FPS on H100). Requires initial compilation time.",
             )
         )
 
@@ -129,7 +143,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
         self._output_file = ProjectFileParameter(
             node=self,
             name="output_file",
-            default_filename="segmented_video.mp4",
+            default_filename="multiplex_segmented_video.mp4",
         )
         self._output_file.add_parameter()
 
@@ -145,9 +159,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
         if model_errors:
             errors.extend(model_errors)
 
-        text_prompt = self.get_parameter_value("text_prompt")
-        if not text_prompt or text_prompt.strip() == "":
-            errors.append(ValueError("Text prompt cannot be empty. Please provide a description of what to segment."))
+        text_prompts = self.get_parameter_value("text_prompts")
+        if not text_prompts or (isinstance(text_prompts, str) and text_prompts.strip() == ""):
+            errors.append(ValueError("Text prompts cannot be empty. Please provide descriptions of what to segment."))
 
         return errors if errors else None
 
@@ -155,8 +169,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
         await self._process()
 
     async def _process(self) -> None:
-        """Main processing logic"""
-        # Reset execution state at the start of each run
+        """Main processing logic using SAM3.1 Object Multiplex"""
         self._clear_execution_status()
 
         temp_dir = None
@@ -165,9 +178,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
         try:
             # Get input parameters
             input_video_artifact = self.get_parameter_value("input_video")
-            text_prompt = self.get_parameter_value("text_prompt")
+            text_prompts_raw = self.get_parameter_value("text_prompts")
             prompt_frame = self.get_parameter_value("prompt_frame")
             mask_opacity = self.get_parameter_value("mask_opacity")
+            use_compile = self.get_parameter_value("use_torch_compile")
 
             if not input_video_artifact:
                 error_details = "No input video provided"
@@ -175,11 +189,17 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 self._handle_failure_exception(ValueError(error_details))
                 return
 
-            self.log_params.append_to_logs("Starting SAM3 video segmentation...\n")
-            self.log_params.append_to_logs(f"Text prompt: {text_prompt}\n")
+            # Parse text prompts (comma-separated string or list)
+            if isinstance(text_prompts_raw, str):
+                text_prompts = [p.strip() for p in text_prompts_raw.split(",") if p.strip()]
+            else:
+                text_prompts = [str(p).strip() for p in text_prompts_raw if str(p).strip()]
+
+            self.log_params.append_to_logs("Starting SAM3.1 Multiplex video segmentation...\n")
+            self.log_params.append_to_logs(f"Text prompts ({len(text_prompts)}): {text_prompts}\n")
 
             # Create temp directory for frames
-            temp_dir = Path(tempfile.mkdtemp(prefix="sam3_video_"))
+            temp_dir = Path(tempfile.mkdtemp(prefix="sam3_multiplex_"))
             frames_dir = temp_dir / "frames"
             frames_dir.mkdir()
 
@@ -195,13 +215,11 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 prompt_frame = 0
                 self.log_params.append_to_logs("Prompt frame adjusted to 0 (was >= frame count)\n")
 
-            # Load or initialize model
-            # Note: SAM3 video predictor uses torch.distributed internally,
-            # so predictor calls are not wrapped in asyncio.to_thread
-            self._load_model()
+            # Load SAM3.1 Multiplex predictor
+            self._load_model(use_compile)
 
             # Start video session
-            self.log_params.append_to_logs("Starting video session...\n")
+            self.log_params.append_to_logs("Starting multiplex video session...\n")
             response = self._predictor.handle_request(
                 request={
                     "type": "start_session",
@@ -210,26 +228,29 @@ class Sam3SegmentVideo(SuccessFailureNode):
             )
             session_id = response["session_id"]
 
-            # Add text prompt
-            self.log_params.append_to_logs(f"Adding prompt '{text_prompt}' at frame {prompt_frame}...\n")
-            prompt_response = self._predictor.handle_request(
-                request={
-                    "type": "add_prompt",
-                    "session_id": session_id,
-                    "frame_index": prompt_frame,
-                    "text": text_prompt,
-                }
-            )
+            # Add text prompts for all objects
+            total_objects = 0
+            for prompt in text_prompts:
+                self.log_params.append_to_logs(f"Adding prompt '{prompt}' at frame {prompt_frame}...\n")
+                prompt_response = self._predictor.handle_request(
+                    request={
+                        "type": "add_prompt",
+                        "session_id": session_id,
+                        "frame_index": prompt_frame,
+                        "text": prompt,
+                    }
+                )
+                num_found = len(prompt_response.get("outputs", {}))
+                total_objects += num_found
+                self.log_params.append_to_logs(f"  Found {num_found} object(s) for '{prompt}'\n")
 
-            # Get number of objects found from initial prompt
-            num_objects = len(prompt_response.get("outputs", {}))
-            self.log_params.append_to_logs(f"Found {num_objects} object(s) matching prompt\n")
+            self.log_params.append_to_logs(f"Total objects to track: {total_objects}\n")
 
-            if num_objects == 0:
-                self.log_params.append_to_logs("Warning: No objects found matching the prompt\n")
+            if total_objects == 0:
+                self.log_params.append_to_logs("Warning: No objects found matching any prompts\n")
 
-            # Propagate through video
-            self.log_params.append_to_logs("Propagating segmentation through video...\n")
+            # Propagate through video with Object Multiplex
+            self.log_params.append_to_logs("Propagating segmentation through video (Object Multiplex)...\n")
             outputs_per_frame = self._propagate_in_video(session_id)
 
             num_frames = len(outputs_per_frame)
@@ -251,7 +272,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 mask_opacity,
             )
 
-            # Encode individual mask videos (directly to H.264)
+            # Encode individual mask videos
             for obj_idx, mask_frames_dir in enumerate(mask_frame_dirs):
                 mask_video_path = temp_dir / f"mask_{obj_idx}.mp4"
                 await self._encode_video(mask_frames_dir, mask_video_path, fps)
@@ -259,7 +280,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 mask_artifacts.append(mask_artifact)
                 self.log_params.append_to_logs(f"Created mask video {obj_idx + 1}\n")
 
-            # Encode composite video (directly to H.264)
+            # Encode composite video
             composite_video_path = temp_dir / "composite.mp4"
             await self._encode_video(composite_frames_dir, composite_video_path, fps)
             composite_artifact = self._video_to_artifact(composite_video_path)
@@ -279,7 +300,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
             self.set_parameter_value("num_frames_processed", num_frames)
             self.set_parameter_value("num_objects_found", len(mask_artifacts))
 
-            self.log_params.append_to_logs("Video segmentation complete!\n")
+            self.log_params.append_to_logs("Multiplex video segmentation complete!\n")
 
             # Publish outputs
             self.parameter_output_values["output_masks"] = mask_artifacts
@@ -289,24 +310,21 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
             # Set success status
             success_details = (
-                f"Video segmentation completed successfully\n"
-                f"Text prompt: {text_prompt}\n"
+                f"Multiplex video segmentation completed successfully\n"
+                f"Text prompts: {', '.join(text_prompts)}\n"
                 f"Frames processed: {num_frames}\n"
-                f"Objects found: {len(mask_artifacts)}"
+                f"Objects found: {len(mask_artifacts)}\n"
+                f"torch.compile: {'enabled' if use_compile else 'disabled'}"
             )
             self._set_status_results(was_successful=True, result_details=f"SUCCESS: {success_details}")
 
         except Exception as e:
-            error_msg = f"Error during video segmentation: {str(e)}"
+            error_msg = f"Error during multiplex video segmentation: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")
             logger.error(error_msg, exc_info=True)
 
-            # Set failure status
             failure_details = (
-                f"Video segmentation failed\n"
-                f"Text prompt: {text_prompt if 'text_prompt' in locals() else 'N/A'}\n"
-                f"Error: {str(e)}\n"
-                f"Exception type: {type(e).__name__}"
+                f"Multiplex video segmentation failed\nError: {str(e)}\nException type: {type(e).__name__}"
             )
             self._set_status_results(was_successful=False, result_details=f"FAILURE: {failure_details}")
             self._handle_failure_exception(e)
@@ -319,9 +337,8 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
-            # Release VRAM - close session and shutdown predictor
+            # Release VRAM
             if self._predictor is not None:
-                # Close session first to free GPU resources
                 if session_id is not None:
                     try:
                         self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
@@ -329,10 +346,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
                     except Exception:
                         pass
 
-                # Then shutdown the predictor
                 try:
                     self._predictor.shutdown()
-                    self.log_params.append_to_logs("Video predictor shut down\n")
+                    self.log_params.append_to_logs("Multiplex predictor shut down\n")
                 except Exception as shutdown_error:
                     logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
                 del self._predictor
@@ -352,13 +368,13 @@ class Sam3SegmentVideo(SuccessFailureNode):
             except Exception:
                 pass
 
-    def _load_model(self) -> None:
-        """Load or cache the SAM3 video predictor"""
+    def _load_model(self, use_compile: bool = False) -> None:
+        """Load the SAM3.1 Multiplex video predictor"""
         if self._predictor is not None:
-            self.log_params.append_to_logs("Using cached video predictor\n")
+            self.log_params.append_to_logs("Using cached multiplex predictor\n")
             return
 
-        self.log_params.append_to_logs("Loading SAM3 video predictor...\n")
+        self.log_params.append_to_logs("Loading SAM3.1 Multiplex video predictor...\n")
 
         # Add _sam3_repo to sys.path if not present
         import sys
@@ -369,9 +385,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         try:
             import torch
-            from sam3.model_builder import build_sam3_video_predictor
+            from sam3.model_builder import build_sam3_multiplex_video_predictor
 
-            # Log GPU/CUDA diagnostic info to help debug cloud deployment issues
+            # Log GPU/CUDA diagnostic info
             cuda_available = torch.cuda.is_available()
             device_count = torch.cuda.device_count() if cuda_available else 0
             self.log_params.append_to_logs(
@@ -384,34 +400,33 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 for i in range(device_count):
                     self.log_params.append_to_logs(f"  GPU {i}: {torch.cuda.get_device_name(i)}\n")
 
-            # Get available GPUs
-            gpus_to_use = list(range(device_count))
-
-            if not gpus_to_use:
+            if not cuda_available:
                 self.log_params.append_to_logs(
-                    "No GPU available. SAM3 video segmentation requires a GPU. "
+                    "No GPU available. SAM3.1 Multiplex video segmentation requires a GPU. "
                     "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
                 )
 
-            # Build the video predictor
-            self._predictor = build_sam3_video_predictor(gpus_to_use=gpus_to_use)
+            # Build the SAM3.1 Multiplex video predictor
+            # Disable Flash Attention 3 (requires flash-attn package which is hard to install on Windows)
+            self._predictor = build_sam3_multiplex_video_predictor(
+                compile=use_compile,
+                use_fa3=False,
+            )
 
-            self.log_params.append_to_logs("Video predictor loaded successfully\n")
+            compile_status = "enabled" if use_compile else "disabled"
+            self.log_params.append_to_logs(f"Multiplex predictor loaded (torch.compile: {compile_status})\n")
 
         except ImportError as e:
-            error_msg = "SAM3 library not installed. Please check the installation logs."
+            error_msg = "SAM3.1 library not installed. Please check the installation logs."
             self.log_params.append_to_logs(f"{error_msg}\n")
             raise ImportError(error_msg) from e
         except Exception as e:
-            error_msg = f"Failed to load video predictor: {str(e)}"
+            error_msg = f"Failed to load multiplex predictor: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")
             raise
 
     def _extract_frames(self, video_artifact, output_dir: Path) -> tuple[Path, float, int]:
-        """Extract frames from video artifact to a directory.
-
-        Returns (video_path, fps, frame_count)
-        """
+        """Extract frames from video artifact to a directory."""
         try:
             import cv2
 
@@ -422,21 +437,17 @@ class Sam3SegmentVideo(SuccessFailureNode):
             msg = (
                 f"Failed to import cv2: {e}\n"
                 "This is likely caused by opencv-python (GUI variant) being installed instead of "
-                "opencv-python-headless. The GUI variant requires libGL.so.1 which is not available "
-                "in headless environments. Check the SAM3 library setup logs for details."
+                "opencv-python-headless."
             )
             self.log_params.append_to_logs(msg + "\n")
             raise ImportError(msg) from e
 
-        # Get video data
         video_url = video_artifact.value
         video_data = File(video_url).read_bytes()
 
-        # Write to temp file for OpenCV
         temp_video = output_dir.parent / "input_video.mp4"
         temp_video.write_bytes(video_data)
 
-        # Open video and extract frames
         cap = cv2.VideoCapture(str(temp_video))
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_count = 0
@@ -446,7 +457,6 @@ class Sam3SegmentVideo(SuccessFailureNode):
             if not ret:
                 break
 
-            # Save frame as JPEG (SAM3 expects JPEG frames)
             frame_path = output_dir / f"{frame_count:06d}.jpg"
             cv2.imwrite(str(frame_path), frame)
             frame_count += 1
@@ -456,7 +466,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
         return temp_video, fps, frame_count
 
     def _propagate_in_video(self, session_id: str) -> dict:
-        """Propagate segmentation through all video frames."""
+        """Propagate segmentation through all video frames using Object Multiplex."""
         outputs_per_frame = {}
 
         for response in self._predictor.handle_stream_request(
@@ -472,14 +482,9 @@ class Sam3SegmentVideo(SuccessFailureNode):
     def _create_masked_frames_multi(
         self, input_dir: Path, outputs_per_frame: dict, composite_dir: Path, temp_dir: Path, opacity: float
     ) -> list[Path]:
-        """Create individual mask frame directories and composite frames.
-
-        Returns list of mask frame directories (one per object) for encoding into separate videos.
-        Also creates composite frames in composite_dir with all masks overlaid.
-        """
+        """Create individual mask frame directories and composite frames."""
         import cv2
 
-        # Color palette for different objects
         colors = [
             (255, 0, 0),  # Red
             (0, 255, 0),  # Green
@@ -489,6 +494,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
             (0, 255, 255),  # Cyan
             (255, 128, 0),  # Orange
             (128, 0, 255),  # Purple
+            (0, 128, 255),  # Light blue
+            (255, 128, 128),  # Light red
+            (128, 255, 128),  # Light green
+            (128, 128, 255),  # Light purple
         ]
 
         # Determine number of objects from first frame with masks
@@ -518,13 +527,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
             mask_frame_dirs.append(mask_dir)
 
         for frame_idx, outputs in outputs_per_frame.items():
-            # Load original frame
             frame_path = input_dir / f"{frame_idx:06d}.jpg"
             if not frame_path.exists():
-                # Create black frames for all mask videos for missing input frames
-                logger.warning(f"Frame {frame_idx}: Input frame not found. Creating black mask frames.")
+                logger.warning(f"Frame {frame_idx}: Input frame not found.")
                 for obj_idx in range(num_objects):
-                    # Use dimensions from first available frame or default
                     if obj_idx < len(mask_frame_dirs):
                         existing_frames = list(mask_frame_dirs[obj_idx].glob("*.jpg"))
                         if existing_frames:
@@ -539,35 +545,27 @@ class Sam3SegmentVideo(SuccessFailureNode):
             frame = cv2.imread(str(frame_path))
             overlay = frame.copy()
 
-            # Get masks from output structure
             binary_masks = outputs.get("out_binary_masks")
 
-            # If no masks for this frame, create black mask frames for all objects
             if binary_masks is None:
                 for obj_idx in range(num_objects):
                     if obj_idx < len(mask_frame_dirs):
                         mask_frame = np.zeros_like(frame)
                         mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
                         cv2.imwrite(str(mask_frame_path), mask_frame)
-                # Save composite frame (original frame, no overlay)
                 composite_path = composite_dir / f"{frame_idx:06d}.jpg"
                 cv2.imwrite(str(composite_path), frame)
                 continue
 
-            # Handle tensor on GPU if needed
             if hasattr(binary_masks, "cpu"):
                 binary_masks = binary_masks.cpu().numpy()
             elif not isinstance(binary_masks, np.ndarray):
                 binary_masks = np.array(binary_masks)
 
-            # binary_masks shape is [num_objects, H, W]
             if binary_masks.ndim == 2:
-                # Single mask, add object dimension
                 binary_masks = binary_masks[np.newaxis, ...]
             elif binary_masks.ndim != 3:
-                logger.warning(
-                    f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}. Creating black mask frames."
-                )
+                logger.warning(f"Frame {frame_idx}: Unexpected masks shape {binary_masks.shape}.")
                 for obj_idx in range(num_objects):
                     if obj_idx < len(mask_frame_dirs):
                         mask_frame = np.zeros_like(frame)
@@ -577,47 +575,35 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 cv2.imwrite(str(composite_path), frame)
                 continue
 
-            # Process each object's mask
             for obj_idx in range(num_objects):
                 if obj_idx >= len(mask_frame_dirs):
                     break
 
-                # Get mask for this object, or create black frame if not available
                 if obj_idx < len(binary_masks):
                     mask = binary_masks[obj_idx]
 
-                    # Validate mask dimensions
                     if mask.shape[0] == 0 or mask.shape[1] == 0:
-                        logger.warning(
-                            f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}. Creating black frame."
-                        )
+                        logger.warning(f"Frame {frame_idx}, obj {obj_idx}: Empty mask shape={mask.shape}.")
                         mask_frame = np.zeros_like(frame)
                     else:
-                        # Resize mask to match frame if needed
                         if mask.shape[0] != frame.shape[0] or mask.shape[1] != frame.shape[1]:
                             mask = cv2.resize(mask.astype(np.float32), (frame.shape[1], frame.shape[0]))
                             mask = mask > 0.5
 
                         color = colors[obj_idx % len(colors)]
 
-                        # Save individual mask frame (white mask on black background)
                         mask_frame = np.zeros_like(frame)
                         mask_frame[mask > 0] = (255, 255, 255)
 
-                        # Apply to composite overlay
                         overlay[mask > 0] = color
                 else:
-                    # Object not found in this frame, create black mask
                     mask_frame = np.zeros_like(frame)
 
-                # Always save mask frame for every object in every frame
                 mask_frame_path = mask_frame_dirs[obj_idx] / f"{frame_idx:06d}.jpg"
                 cv2.imwrite(str(mask_frame_path), mask_frame)
 
-            # Blend overlay with original frame for composite
             composite_frame = cv2.addWeighted(frame, 1 - opacity, overlay, opacity, 0)
 
-            # Save composite frame
             composite_path = composite_dir / f"{frame_idx:06d}.jpg"
             cv2.imwrite(str(composite_path), composite_frame)
 
@@ -625,15 +611,12 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
     async def _encode_video(self, frames_dir: Path, output_path: Path, fps: float) -> None:
         """Encode frames back into a web-browser-compatible video using ffmpeg."""
-        # Get list of frames to verify we have frames
         frame_files = sorted(frames_dir.glob("*.jpg"))
         if not frame_files:
             raise ValueError("No frames to encode")
 
-        # Get ffmpeg path
         ffmpeg_path, _ = self._get_ffmpeg_paths()
 
-        # Use ffmpeg to encode frames directly to H.264
         process = await asyncio.create_subprocess_exec(
             ffmpeg_path,
             "-framerate",
@@ -662,7 +645,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         try:
             ffmpeg_path, ffprobe_path = static_ffmpeg.run.get_or_fetch_platform_executables_else_raise()
-            return ffmpeg_path, ffprobe_path  # noqa: TRY300
+            return ffmpeg_path, ffprobe_path
         except Exception as e:
             error_msg = f"FFmpeg not found. Please ensure static-ffmpeg is properly installed. Error: {e!s}"
             raise ValueError(error_msg) from e

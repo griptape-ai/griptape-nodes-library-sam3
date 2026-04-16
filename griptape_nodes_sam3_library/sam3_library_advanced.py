@@ -1,4 +1,7 @@
-"""SAM3 Library Advanced - Handles installation and setup for SAM3 dependencies"""
+"""SAM3/SAM3.1 Library Advanced - Handles installation and setup for SAM3 dependencies
+
+SAM3.1 adds Object Multiplex for ~7x faster multi-object tracking.
+"""
 
 import configparser
 import json
@@ -16,7 +19,10 @@ logger = logging.getLogger("sam3_library")
 
 
 class Sam3LibraryAdvanced(AdvancedNodeLibrary):
-    """Advanced library implementation for SAM3 (Segment Anything with Concepts)."""
+    """Advanced library implementation for SAM3/SAM3.1 (Segment Anything with Concepts).
+
+    SAM3.1 adds Object Multiplex for ~7x faster multi-object tracking.
+    """
 
     def before_library_nodes_loaded(self, library_data: LibrarySchema, library: Library) -> None:
         """Called before any nodes are loaded from the library.
