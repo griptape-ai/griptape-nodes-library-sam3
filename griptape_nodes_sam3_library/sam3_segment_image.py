@@ -176,12 +176,16 @@ class Sam3SegmentImage(SuccessFailureNode):
             await asyncio.to_thread(self._load_model)
 
             # Set the image in the processor
+            # SAM3's perflib uses fused ops that require bfloat16 autocast
             self.log_params.append_to_logs("Processing image...\n")
-            inference_state = await asyncio.to_thread(self._processor.set_image, input_image)
+            inference_state = await asyncio.to_thread(
+                self._run_with_autocast, self._processor.set_image, input_image
+            )
 
             # Run segmentation with text prompt
             self.log_params.append_to_logs(f"Segmenting '{text_prompt}'...\n")
             output = await asyncio.to_thread(
+                self._run_with_autocast,
                 self._processor.set_text_prompt,
                 state=inference_state,
                 prompt=text_prompt,
@@ -315,6 +319,13 @@ class Sam3SegmentImage(SuccessFailureNode):
             error_msg = f"Failed to load model: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")
             raise
+
+    def _run_with_autocast(self, func, *args, **kwargs):
+        """Run a function under bfloat16 autocast for SAM3's fused ops."""
+        import torch
+
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            return func(*args, **kwargs)
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact) -> Image.Image:
         """Convert image artifact to PIL Image"""
