@@ -327,9 +327,20 @@ class Sam3SegmentImage(SuccessFailureNode):
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             return func(*args, **kwargs)
 
-    def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact) -> Image.Image:
+    def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact | dict) -> Image.Image:
         """Convert image artifact to PIL Image"""
-        if isinstance(artifact, ImageUrlArtifact):
+        if isinstance(artifact, dict):
+            # Handle dict format from Display Image node
+            if "value" in artifact:
+                value = artifact["value"]
+                if isinstance(value, str):
+                    # File path
+                    image_bytes = File(value).read_bytes()
+                    return Image.open(BytesIO(image_bytes)).convert("RGB")
+                elif isinstance(value, bytes):
+                    return Image.open(BytesIO(value)).convert("RGB")
+            raise ValueError(f"Unsupported dict format: {artifact.keys()}")
+        elif isinstance(artifact, ImageUrlArtifact):
             image_bytes = File(artifact.value).read_bytes()
             return Image.open(BytesIO(image_bytes)).convert("RGB")
         elif isinstance(artifact, ImageArtifact):
