@@ -5,7 +5,7 @@
   "metadata": {
     "author": "griptape-ai",
     "description": "SAM3/SAM3.1 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts. SAM3.1 includes Object Multiplex for ~7x faster multi-object tracking.",
-    "library_version": "make[1]: Entering directory '/home/runner/work/griptape-nodes-library-sam3/griptape-nodes-library-sam3'..1",
+    "library_version": "0.3.3",
     "engine_version": "0.80.0",
     "tags": [
       "Griptape",
