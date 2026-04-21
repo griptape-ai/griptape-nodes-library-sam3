@@ -222,7 +222,8 @@ class Sam3SegmentVideo(SuccessFailureNode):
             )
 
             # Get number of objects found from initial prompt
-            num_objects = len(prompt_response.get("outputs", {}))
+            prompt_outputs = prompt_response.get("outputs", {})
+            num_objects = len(prompt_outputs.get("out_obj_ids", []))
             self.log_params.append_to_logs(f"Found {num_objects} object(s) matching prompt\n")
 
             if num_objects == 0:
@@ -466,7 +467,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 "session_id": session_id,
             }
         ):
-            outputs_per_frame[response["frame_index"]] = response["outputs"]
+            # On multi-GPU setups, non-rank-0 GPUs yield None outputs - skip these
+            outputs = response.get("outputs")
+            if outputs is not None:
+                outputs_per_frame[response["frame_index"]] = outputs
 
         return outputs_per_frame
 
