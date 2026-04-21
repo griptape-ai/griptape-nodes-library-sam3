@@ -178,9 +178,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             # Set the image in the processor
             # SAM3's perflib uses fused ops that require bfloat16 autocast
             self.log_params.append_to_logs("Processing image...\n")
-            inference_state = await asyncio.to_thread(
-                self._run_with_autocast, self._processor.set_image, input_image
-            )
+            inference_state = await asyncio.to_thread(self._run_with_autocast, self._processor.set_image, input_image)
 
             # Run segmentation with text prompt
             self.log_params.append_to_logs(f"Segmenting '{text_prompt}'...\n")
