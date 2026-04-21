@@ -240,7 +240,8 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                         "text": prompt,
                     }
                 )
-                num_found = len(prompt_response.get("outputs", {}))
+                prompt_outputs = prompt_response.get("outputs", {})
+                num_found = len(prompt_outputs.get("out_obj_ids", []))
                 total_objects += num_found
                 self.log_params.append_to_logs(f"  Found {num_found} object(s) for '{prompt}'\n")
 
