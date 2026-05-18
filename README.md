@@ -23,13 +23,13 @@ Segment anything in images and videos using Meta's SAM3 and SAM3.1 (Segment Anyt
 - Python 3.12 or higher
 - CUDA-compatible GPU with sufficient VRAM (8GB+ recommended)
 - HuggingFace account with access to SAM3 model
-- **Windows only**: [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with C++ compiler (see below)
+- **Windows only**: [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2026) with C++ compiler (see below)
 
 ### Windows: Install Visual Studio Build Tools
 
 SAM3 uses [Triton](https://github.com/triton-lang/triton) which requires a C++ compiler on [Windows](https://github.com/woct0rdho/triton-windows?tab=readme-ov-file#5-c-compiler) .
 
-1. **Download** [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+1. **Download** [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2026)
 2. **Run the installer** and select "Desktop development with C++"
 3. **Ensure these components are selected** (at minimum):
    - MSVC v143 (or latest version)
