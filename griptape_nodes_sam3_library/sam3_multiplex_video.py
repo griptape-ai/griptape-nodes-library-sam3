@@ -443,7 +443,10 @@ class Sam3MultiplexVideo(SuccessFailureNode):
             self.log_params.append_to_logs(msg + "\n")
             raise ImportError(msg) from e
 
-        video_url = video_artifact.value
+        if isinstance(video_artifact, dict):
+            video_url = video_artifact["value"]
+        else:
+            video_url = video_artifact.value
         video_data = File(video_url).read_bytes()
 
         temp_video = output_dir.parent / "input_video.mp4"

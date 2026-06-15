@@ -431,7 +431,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
             raise ImportError(msg) from e
 
         # Get video data
-        video_url = video_artifact.value
+        if isinstance(video_artifact, dict):
+            video_url = video_artifact["value"]
+        else:
+            video_url = video_artifact.value
         video_data = File(video_url).read_bytes()
 
         # Write to temp file for OpenCV
