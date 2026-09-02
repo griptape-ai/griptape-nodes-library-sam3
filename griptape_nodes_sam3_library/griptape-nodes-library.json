@@ -1,96 +1,100 @@
 {
-  "name": "SAM3 Library",
-  "library_schema_version": "0.4.0",
-  "advanced_library_path": "sam3_library_advanced.py",
-  "metadata": {
-    "author": "griptape-ai",
-    "description": "SAM3/SAM3.1 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts. SAM3.1 includes Object Multiplex for ~7x faster multi-object tracking.",
-    "library_version": "0.3.3",
-    "engine_version": "0.80.0",
-    "tags": [
-      "Griptape",
-      "AI",
-      "SAM3",
-      "SAM3.1",
-      "Image Segmentation",
-      "Video Segmentation",
-      "Computer Vision",
-      "Meta",
-      "Object Multiplex"
+    "name": "SAM3 Library",
+    "library_schema_version": "0.12.0",
+    "advanced_library_path": "sam3_library_advanced.py",
+    "metadata": {
+        "author": "griptape-ai",
+        "description": "SAM3/SAM3.1 (Segment Anything with Concepts) integration for Griptape Nodes - AI-powered image and video segmentation with text prompts. SAM3.1 includes Object Multiplex for ~7x faster multi-object tracking.",
+        "library_version": "0.3.3",
+        "engine_version": "0.99.0",
+        "tags": [
+            "Griptape",
+            "AI",
+            "SAM3",
+            "SAM3.1",
+            "Image Segmentation",
+            "Video Segmentation",
+            "Computer Vision",
+            "Meta",
+            "Object Multiplex"
+        ],
+        "dependencies": {
+            "pip_dependencies": [
+                "numpy",
+                "Pillow"
+            ],
+            "pip_install_flags": [
+                "--extra-index-url",
+                "https://download.pytorch.org/whl/cu128"
+            ],
+            "pip_dependencies_exec": [
+                "torch==2.7.0",
+                "torchvision==0.22.0",
+                "torchaudio==2.7.0",
+                "static_ffmpeg>=2.13.0",
+                "opencv-python-headless>=4.11.0.86"
+            ]
+        },
+        "resources": {
+            "required": {
+                "compute": [
+                    [
+                        "cuda"
+                    ],
+                    "has_any"
+                ]
+            }
+        },
+        "submodule_info": {
+            "url": "https://github.com/facebookresearch/sam3.git",
+            "commit": "967fdd651f71ca14949122fed4c918a778ca9334"
+        }
+    },
+    "categories": [
+        {
+            "image/segmentation": {
+                "color": "border-purple-500",
+                "title": "Image/Segmentation",
+                "description": "Image segmentation nodes",
+                "icon": "layers"
+            }
+        },
+        {
+            "video/segmentation": {
+                "color": "border-pink-500",
+                "title": "Video/Segmentation",
+                "description": "Video segmentation nodes",
+                "icon": "layers"
+            }
+        }
     ],
-    "dependencies": {
-      "pip_dependencies": [
-        "torch==2.7.0",
-        "torchvision==0.22.0",
-        "torchaudio==2.7.0",
-        "static_ffmpeg>=2.13.0",
-        "opencv-python-headless>=4.11.0.86"
-      ],
-      "pip_install_flags": [
-        "--extra-index-url",
-        "https://download.pytorch.org/whl/cu128"
-      ]
-    },
-    "resources": {
-      "required": {
-        "compute": [
-          [
-            "cuda"
-          ],
-          "has_any"
-        ]
-      }
-    },
-    "submodule_info": {
-      "url": "https://github.com/facebookresearch/sam3.git",
-      "commit": "967fdd651f71ca14949122fed4c918a778ca9334"
-    }
-  },
-  "categories": [
-    {
-      "image/segmentation": {
-        "color": "border-purple-500",
-        "title": "Image/Segmentation",
-        "description": "Image segmentation nodes",
-        "icon": "layers"
-      }
-    },
-    {
-      "video/segmentation": {
-        "color": "border-pink-500",
-        "title": "Video/Segmentation",
-        "description": "Video segmentation nodes",
-        "icon": "layers"
-      }
-    }
-  ],
-  "nodes": [
-    {
-      "class_name": "Sam3SegmentImage",
-      "file_path": "sam3_segment_image.py",
-      "metadata": {
-        "category": "image/segmentation",
-        "description": "Segment objects in images using SAM3/SAM3.1 with text prompts",
-        "display_name": "SAM3 Segment Image"
-      }
-    },
-    {
-      "class_name": "Sam3SegmentVideo",
-      "file_path": "sam3_segment_video.py",
-      "metadata": {
-        "category": "video/segmentation",
-        "description": "Segment objects in videos using SAM3 with text prompts",
-        "display_name": "SAM3 Segment Video"
-      }
-    },
-    {
-      "class_name": "Sam3MultiplexVideo",
-      "file_path": "sam3_multiplex_video.py",
-      "metadata": {
-        "category": "video/segmentation",
-        "description": "Segment and track multiple objects in videos using SAM3.1 Object Multiplex (~7x faster multi-object tracking)",
-        "display_name": "SAM3.1 Multiplex Video"
-      }
-    }
-  ]
+    "nodes": [
+        {
+            "class_name": "Sam3SegmentImage",
+            "file_path": "sam3_segment_image.py",
+            "metadata": {
+                "category": "image/segmentation",
+                "description": "Segment objects in images using SAM3/SAM3.1 with text prompts",
+                "display_name": "SAM3 Segment Image"
+            }
+        },
+        {
+            "class_name": "Sam3SegmentVideo",
+            "file_path": "sam3_segment_video.py",
+            "metadata": {
+                "category": "video/segmentation",
+                "description": "Segment objects in videos using SAM3 with text prompts",
+                "display_name": "SAM3 Segment Video"
+            }
+        },
+        {
+            "class_name": "Sam3MultiplexVideo",
+            "file_path": "sam3_multiplex_video.py",
+            "metadata": {
+                "category": "video/segmentation",
+                "description": "Segment and track multiple objects in videos using SAM3.1 Object Multiplex (~7x faster multi-object tracking)",
+                "display_name": "SAM3.1 Multiplex Video"
+            }
+        }
+    ]
 }
