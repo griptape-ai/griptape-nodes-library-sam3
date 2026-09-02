@@ -12,8 +12,6 @@ dependencies = [
     "numpy",
     "Pillow",
 ]
-# Note: sam3, torch, torchvision, torchaudio are installed by sam3_library_advanced.py
-# at runtime via the submodule, not as pip dependencies
 
 [tool.uv.sources]
 griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
@@ -32,7 +30,20 @@ exec = [
     "torchaudio==2.7.0",
     "static_ffmpeg>=2.13.0",
     "opencv-python-headless>=4.11.0.86",
+    # einops is imported at module scope on the model path; scikit-image backs
+    # connected_components when triton is unavailable or the tensor is on CPU.
+    "sam3 @ git+https://github.com/facebookresearch/sam3.git@967fdd651f71ca14949122fed4c918a778ca9334",
+    "einops",
+    "scikit-image",
+    # triton publishes no macOS wheels, so it is declared per-platform rather than
+    # installed behind an is_windows() branch.
+    "triton; sys_platform == 'linux'",
+    "triton-windows; sys_platform == 'win32'",
 ]
+# The exec extra carries a git direct reference, which hatchling rejects by default.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -362,13 +362,6 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
         self.log_params.append_to_logs("Loading SAM3 video predictor...\n")
 
-        # Add _sam3_repo to sys.path if not present
-        import sys
-
-        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
-        if sam3_repo_path not in sys.path:
-            sys.path.insert(0, sam3_repo_path)
-
         try:
             import torch
             from sam3.model_builder import build_sam3_video_predictor

@@ -286,17 +286,8 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         self.log_params.append_to_logs("Loading SAM3 model from Hugging Face...\n")
 
-        # Add _sam3_repo to sys.path if not present (needed because .pth files
-        # aren't processed when running from griptape-nodes' venv)
-        import sys
-        from pathlib import Path
-
-        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
-        if sam3_repo_path not in sys.path:
-            sys.path.insert(0, sam3_repo_path)
-
         try:
-            # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
+            # sam3 is an execution dependency, so it resolves from the worker's .venv-exec
             from sam3 import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
