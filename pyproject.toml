@@ -38,6 +38,17 @@ exec = [
     # dependency at all -- it free-rides on torch's and triton-windows' unpinned floors, so
     # with --index-strategy unsafe-best-match uv resolves the newest, which no longer has it.
     "setuptools<82",
+    # The rest of sam3's `notebooks` extra, which its own installer used to install and which
+    # carries runtime dependencies sam3 does not declare in its base requirements. Only the
+    # notebook UI members are left out (jupyter, notebook, ipywidgets, ipycanvas, ipympl), plus
+    # opencv-python because the headless variant is pinned above deliberately.
+    #
+    # decord ships wheels for manylinux and win_amd64 only, so it is gated off macOS -- where
+    # this library cannot run anyway, its cuda requirement refusing execution before any install.
+    "pycocotools",
+    "decord; sys_platform != 'darwin'",
+    "scikit-learn",
+    "matplotlib",
     "einops",
     "scikit-image",
     # Windows only: torch's Linux wheels already depend on a matching triton, and there is no
