@@ -46,6 +46,11 @@ exec = [
     # decord ships wheels for manylinux and win_amd64 only, so it is gated off macOS -- where
     # this library cannot run anyway, its cuda requirement refusing execution before any install.
     "pycocotools",
+    # sam3.model.sam3_video_predictor imports psutil at module scope, and model_builder imports
+    # that module, so it is on the eager chain for any `from sam3 import ...`. Neither sam3's base
+    # requirements nor its notebooks extra declares it -- under the old installer it arrived
+    # transitively through jupyter -> ipykernel, which this library deliberately does not install.
+    "psutil",
     "decord; sys_platform != 'darwin'",
     "scikit-learn",
     "matplotlib",
