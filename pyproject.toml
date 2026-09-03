@@ -33,10 +33,11 @@ exec = [
     # einops is imported at module scope on the model path; scikit-image backs
     # connected_components when triton is unavailable or the tensor is on CPU.
     "sam3 @ git+https://github.com/facebookresearch/sam3.git@967fdd651f71ca14949122fed4c918a778ca9334",
-    # sam3's model_builder imports pkg_resources, which ships with setuptools and which
-    # sam3 does not declare. uv-created venvs do not seed setuptools, and neither the
-    # engine environment nor .venv-exec carries it otherwise, so the import fails outright.
-    "setuptools",
+    # sam3's model_builder locates its BPE vocab through pkg_resources.resource_filename,
+    # which setuptools 82.0.0 removed (81.0.0 still ships it). sam3 declares no setuptools
+    # dependency at all -- it free-rides on torch's and triton-windows' unpinned floors, so
+    # with --index-strategy unsafe-best-match uv resolves the newest, which no longer has it.
+    "setuptools<82",
     "einops",
     "scikit-image",
     # Windows only: torch's Linux wheels already depend on a matching triton, and there is no
