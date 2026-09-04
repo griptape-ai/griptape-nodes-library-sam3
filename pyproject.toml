@@ -12,8 +12,6 @@ dependencies = [
     "numpy",
     "Pillow",
 ]
-# Note: sam3, torch, torchvision, torchaudio are installed by sam3_library_advanced.py
-# at runtime via the submodule, not as pip dependencies
 
 [tool.uv.sources]
 griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
@@ -32,7 +30,41 @@ exec = [
     "torchaudio==2.7.0",
     "static_ffmpeg>=2.13.0",
     "opencv-python-headless>=4.11.0.86",
+    # einops is imported at module scope on the model path; scikit-image backs
+    # connected_components when triton is unavailable or the tensor is on CPU.
+    "sam3 @ git+https://github.com/facebookresearch/sam3.git@967fdd651f71ca14949122fed4c918a778ca9334",
+    # sam3's model_builder locates its BPE vocab through pkg_resources.resource_filename,
+    # which setuptools 82.0.0 removed (81.0.0 still ships it). sam3 declares no setuptools
+    # dependency at all -- it free-rides on torch's and triton-windows' unpinned floors, so
+    # with --index-strategy unsafe-best-match uv resolves the newest, which no longer has it.
+    "setuptools<82",
+    # The rest of sam3's `notebooks` extra, which its own installer used to install and which
+    # carries runtime dependencies sam3 does not declare in its base requirements. Only the
+    # notebook UI members are left out (jupyter, notebook, ipywidgets, ipycanvas, ipympl), plus
+    # opencv-python because the headless variant is pinned above deliberately.
+    #
+    # decord ships wheels for manylinux and win_amd64 only, so it is gated off macOS -- where
+    # this library cannot run anyway, its cuda requirement refusing execution before any install.
+    "pycocotools",
+    # sam3.model.sam3_video_predictor imports psutil at module scope, and model_builder imports
+    # that module, so it is on the eager chain for any `from sam3 import ...`. Neither sam3's base
+    # requirements nor its notebooks extra declares it -- under the old installer it arrived
+    # transitively through jupyter -> ipykernel, which this library deliberately does not install.
+    "psutil",
+    "decord; sys_platform != 'darwin'",
+    "scikit-learn",
+    "matplotlib",
+    "einops",
+    "scikit-image",
+    # Windows only: torch's Linux wheels already depend on a matching triton, and there is no
+    # macOS wheel at any version. The <3.4 ceiling keeps it paired with torch 2.7 -- unpinned
+    # resolved triton-windows 3.8, which tracks a much later torch.
+    "triton-windows<3.4; sys_platform == 'win32'",
 ]
+# The exec extra carries a git direct reference, which hatchling rejects by default.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

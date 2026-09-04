@@ -1,6 +1,6 @@
 {
     "name": "SAM3 Library",
-    "library_schema_version": "0.12.0",
+    "library_schema_version": "0.13.0",
     "advanced_library_path": "sam3_library_advanced.py",
     "metadata": {
         "author": "griptape-ai",
@@ -25,14 +25,26 @@
             ],
             "pip_install_flags": [
                 "--extra-index-url",
-                "https://download.pytorch.org/whl/cu128"
+                "https://download.pytorch.org/whl/cu128",
+                "--index-strategy",
+                "unsafe-best-match"
             ],
             "pip_dependencies_exec": [
                 "torch==2.7.0",
                 "torchvision==0.22.0",
                 "torchaudio==2.7.0",
                 "static_ffmpeg>=2.13.0",
-                "opencv-python-headless>=4.11.0.86"
+                "opencv-python-headless>=4.11.0.86",
+                "sam3 @ git+https://github.com/facebookresearch/sam3.git@967fdd651f71ca14949122fed4c918a778ca9334",
+    "setuptools<82",
+    "pycocotools",
+    "psutil",
+    "decord; sys_platform != 'darwin'",
+    "scikit-learn",
+    "matplotlib",
+                "einops",
+                "scikit-image",
+                "triton-windows<3.4; sys_platform == 'win32'"
             ]
         },
         "resources": {
@@ -44,10 +56,6 @@
                     "has_any"
                 ]
             }
-        },
-        "submodule_info": {
-            "url": "https://github.com/facebookresearch/sam3.git",
-            "commit": "967fdd651f71ca14949122fed4c918a778ca9334"
         }
     },
     "categories": [
@@ -68,7 +76,10 @@
             }
         }
     ],
-    "nodes": [
+    "execution_modules": [
+    "execution"
+  ],
+  "nodes": [
         {
             "class_name": "Sam3SegmentImage",
             "file_path": "sam3_segment_image.py",

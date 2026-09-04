@@ -357,14 +357,7 @@ class Sam3MultiplexVideo(SuccessFailureNode):
 
             # Force garbage collection and clear CUDA cache
             try:
-                import gc
-
-                gc.collect()
-
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                if self.execution_module("models").release_cuda():
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
@@ -377,31 +370,13 @@ class Sam3MultiplexVideo(SuccessFailureNode):
 
         self.log_params.append_to_logs("Loading SAM3.1 Multiplex video predictor...\n")
 
-        # Add _sam3_repo to sys.path if not present
-        import sys
-
-        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
-        if sam3_repo_path not in sys.path:
-            sys.path.insert(0, sam3_repo_path)
-
         try:
-            import torch
-            from sam3.model_builder import build_sam3_multiplex_video_predictor
+            models = self.execution_module("models")
 
             # Log GPU/CUDA diagnostic info
-            cuda_available = torch.cuda.is_available()
-            device_count = torch.cuda.device_count() if cuda_available else 0
-            self.log_params.append_to_logs(
-                f"GPU diagnostics: torch={torch.__version__}, "
-                f"cuda_built={torch.version.cuda}, "
-                f"cuda_available={cuda_available}, "
-                f"device_count={device_count}\n"
-            )
-            if cuda_available:
-                for i in range(device_count):
-                    self.log_params.append_to_logs(f"  GPU {i}: {torch.cuda.get_device_name(i)}\n")
+            self.log_params.append_to_logs(models.gpu_diagnostics())
 
-            if not cuda_available:
+            if not models.cuda_device_count():
                 self.log_params.append_to_logs(
                     "No GPU available. SAM3.1 Multiplex video segmentation requires a GPU. "
                     "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
@@ -409,7 +384,7 @@ class Sam3MultiplexVideo(SuccessFailureNode):
 
             # Build the SAM3.1 Multiplex video predictor
             # Disable Flash Attention 3 (requires flash-attn package which is hard to install on Windows)
-            self._predictor = build_sam3_multiplex_video_predictor(
+            self._predictor = models.build_sam3_multiplex_video_predictor(
                 compile=use_compile,
                 use_fa3=False,
             )
@@ -417,10 +392,6 @@ class Sam3MultiplexVideo(SuccessFailureNode):
             compile_status = "enabled" if use_compile else "disabled"
             self.log_params.append_to_logs(f"Multiplex predictor loaded (torch.compile: {compile_status})\n")
 
-        except ImportError as e:
-            error_msg = "SAM3.1 library not installed. Please check the installation logs."
-            self.log_params.append_to_logs(f"{error_msg}\n")
-            raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load multiplex predictor: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")

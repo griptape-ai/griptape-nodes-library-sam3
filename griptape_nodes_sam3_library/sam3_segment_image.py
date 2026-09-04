@@ -14,7 +14,8 @@ from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
 from PIL import Image
 
-# SAM3 imports are done lazily in _load_model() to allow installation first
+# sam3 and torch live behind the execution-module boundary (execution/models.py),
+# reached via self.execution_module("models") where nodes execute.
 
 logger = logging.getLogger("sam3_nodes_library")
 
@@ -266,14 +267,7 @@ class Sam3SegmentImage(SuccessFailureNode):
 
             # Force garbage collection and clear CUDA cache
             try:
-                import gc
-
-                gc.collect()
-
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                if self.execution_module("models").release_cuda():
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
@@ -286,33 +280,18 @@ class Sam3SegmentImage(SuccessFailureNode):
 
         self.log_params.append_to_logs("Loading SAM3 model from Hugging Face...\n")
 
-        # Add _sam3_repo to sys.path if not present (needed because .pth files
-        # aren't processed when running from griptape-nodes' venv)
-        import sys
-        from pathlib import Path
-
-        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
-        if sam3_repo_path not in sys.path:
-            sys.path.insert(0, sam3_repo_path)
-
         try:
-            # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
-            from sam3 import build_sam3_image_model
-            from sam3.model.sam3_image_processor import Sam3Processor
+            models = self.execution_module("models")
 
             # Load the model (downloads from Hugging Face automatically)
-            self._model = build_sam3_image_model()
+            self._model = models.build_sam3_image_model()
 
             # Get score threshold from parameter
             score_threshold = self.get_parameter_value("score_threshold")
-            self._processor = Sam3Processor(self._model, confidence_threshold=score_threshold)
+            self._processor = models.Sam3Processor(self._model, confidence_threshold=score_threshold)
 
             self.log_params.append_to_logs("Model loaded successfully\n")
 
-        except ImportError as e:
-            error_msg = "SAM3 library not installed. Please check the installation logs."
-            self.log_params.append_to_logs(f"{error_msg}\n")
-            raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")
@@ -320,10 +299,7 @@ class Sam3SegmentImage(SuccessFailureNode):
 
     def _run_with_autocast(self, func, *args, **kwargs):
         """Run a function under bfloat16 autocast for SAM3's fused ops."""
-        import torch
-
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            return func(*args, **kwargs)
+        return self.execution_module("models").run_with_autocast(func, *args, **kwargs)
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact | dict) -> Image.Image:
         """Convert image artifact to PIL Image"""
