@@ -15,7 +15,8 @@ from griptape_nodes.exe_types.param_components.project_file_parameter import Pro
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
 
-# SAM3 imports are done lazily in _load_model() to allow installation first
+# sam3 and torch live behind the execution-module boundary (execution/models.py),
+# reached via self.execution_module("models") where nodes execute.
 
 logger = logging.getLogger("sam3_nodes_library")
 
@@ -342,14 +343,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
             # Force garbage collection and clear CUDA cache
             try:
-                import gc
-
-                gc.collect()
-
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                if self.execution_module("models").release_cuda():
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
@@ -363,24 +357,13 @@ class Sam3SegmentVideo(SuccessFailureNode):
         self.log_params.append_to_logs("Loading SAM3 video predictor...\n")
 
         try:
-            import torch
-            from sam3.model_builder import build_sam3_video_predictor
+            models = self.execution_module("models")
 
             # Log GPU/CUDA diagnostic info to help debug cloud deployment issues
-            cuda_available = torch.cuda.is_available()
-            device_count = torch.cuda.device_count() if cuda_available else 0
-            self.log_params.append_to_logs(
-                f"GPU diagnostics: torch={torch.__version__}, "
-                f"cuda_built={torch.version.cuda}, "
-                f"cuda_available={cuda_available}, "
-                f"device_count={device_count}\n"
-            )
-            if cuda_available:
-                for i in range(device_count):
-                    self.log_params.append_to_logs(f"  GPU {i}: {torch.cuda.get_device_name(i)}\n")
+            self.log_params.append_to_logs(models.gpu_diagnostics())
 
             # Get available GPUs
-            gpus_to_use = list(range(device_count))
+            gpus_to_use = list(range(models.cuda_device_count()))
 
             if not gpus_to_use:
                 self.log_params.append_to_logs(
@@ -389,14 +372,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 )
 
             # Build the video predictor
-            self._predictor = build_sam3_video_predictor(gpus_to_use=gpus_to_use)
+            self._predictor = models.build_sam3_video_predictor(gpus_to_use=gpus_to_use)
 
             self.log_params.append_to_logs("Video predictor loaded successfully\n")
 
-        except ImportError as e:
-            error_msg = "SAM3 library not installed. Please check the installation logs."
-            self.log_params.append_to_logs(f"{error_msg}\n")
-            raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load video predictor: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")

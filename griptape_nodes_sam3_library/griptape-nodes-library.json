@@ -1,6 +1,6 @@
 {
     "name": "SAM3 Library",
-    "library_schema_version": "0.12.0",
+    "library_schema_version": "0.13.0",
     "advanced_library_path": "sam3_library_advanced.py",
     "metadata": {
         "author": "griptape-ai",
@@ -76,7 +76,10 @@
             }
         }
     ],
-    "nodes": [
+    "execution_modules": [
+    "execution"
+  ],
+  "nodes": [
         {
             "class_name": "Sam3SegmentImage",
             "file_path": "sam3_segment_image.py",
