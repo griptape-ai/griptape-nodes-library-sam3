@@ -143,6 +143,11 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             # Ensure pip is available in the venv
             self._ensure_pip_installed()
 
+            # sam3's model_builder imports pkg_resources to locate its BPE vocab, and setuptools
+            # 82.0.0 removed it. sam3 declares no setuptools dependency, so this has to land before
+            # anything carrying an unpinned floor, which would otherwise resolve past the cap.
+            self._run_pip_install(["setuptools<82"])
+
             # Step 1/3: Install triton (platform-specific)
             logger.info("Step 1/3: Installing triton...")
             if GriptapeNodes.OSManager().is_windows():
