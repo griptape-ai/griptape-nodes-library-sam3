@@ -321,24 +321,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
-            # Release VRAM - close session and shutdown predictor
-            if self._predictor is not None:
-                # Close session first to free GPU resources
-                if session_id is not None:
-                    try:
-                        self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
-                        self.log_params.append_to_logs("Session closed\n")
-                    except Exception:
-                        pass
-
-                # Then shutdown the predictor
-                try:
-                    self._predictor.shutdown()
-                    self.log_params.append_to_logs("Video predictor shut down\n")
-                except Exception as shutdown_error:
-                    logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
-                del self._predictor
-                self._predictor = None
+            self._release_predictor(session_id)
 
             # Force garbage collection and clear CUDA cache
             try:
@@ -346,20 +329,37 @@ class Sam3SegmentVideo(SuccessFailureNode):
 
                 gc.collect()
 
-                import torch
+                if self.execution_device == "cuda":
+                    import torch
 
-                if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self) -> None:
-        """Load or cache the SAM3 video predictor"""
-        if self._predictor is not None:
-            self.log_params.append_to_logs("Using cached video predictor\n")
+    def _release_predictor(self, session_id: str | None) -> None:
+        """Close the session and shut the predictor down so the GPU memory it holds is freed."""
+        if self._predictor is None:
             return
 
+        # Closing the session first releases the per-session GPU allocations.
+        if session_id is not None:
+            try:
+                self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
+                self.log_params.append_to_logs("Session closed\n")
+            except Exception:
+                pass
+
+        try:
+            self._predictor.shutdown()
+            self.log_params.append_to_logs("Video predictor shut down\n")
+        except Exception as shutdown_error:
+            logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
+
+        self._predictor = None
+
+    def _load_model(self) -> None:
+        """Load the SAM3 video predictor."""
         self.log_params.append_to_logs("Loading SAM3 video predictor...\n")
 
         # Add _sam3_repo to sys.path if not present
@@ -374,7 +374,7 @@ class Sam3SegmentVideo(SuccessFailureNode):
             from sam3.model_builder import build_sam3_video_predictor
 
             # Log GPU/CUDA diagnostic info to help debug cloud deployment issues
-            cuda_available = torch.cuda.is_available()
+            cuda_available = self.execution_device == "cuda"
             device_count = torch.cuda.device_count() if cuda_available else 0
             self.log_params.append_to_logs(
                 f"GPU diagnostics: torch={torch.__version__}, "

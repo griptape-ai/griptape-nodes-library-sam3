@@ -253,16 +253,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             self._handle_failure_exception(e)
 
         finally:
-            # Release VRAM - clear model and processor
-            if self._model is not None or self._processor is not None:
-                # Delete processor first (it holds a reference to model)
-                if self._processor is not None:
-                    del self._processor
-                    self._processor = None
-                if self._model is not None:
-                    del self._model
-                    self._model = None
-                self.log_params.append_to_logs("Model released\n")
+            self._release_model()
 
             # Force garbage collection and clear CUDA cache
             try:
@@ -270,20 +261,26 @@ class Sam3SegmentImage(SuccessFailureNode):
 
                 gc.collect()
 
-                import torch
+                if self.execution_device == "cuda":
+                    import torch
 
-                if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self) -> None:
-        """Load or cache the SAM3 model"""
-        if self._model is not None:
-            self.log_params.append_to_logs("Using cached model\n")
+    def _release_model(self) -> None:
+        """Drop the model and processor so the VRAM they hold is freed at the end of a run."""
+        if self._model is None and self._processor is None:
             return
 
+        # The processor holds a reference to the model, so drop it first.
+        self._processor = None
+        self._model = None
+        self.log_params.append_to_logs("Model released\n")
+
+    def _load_model(self) -> None:
+        """Load the SAM3 model."""
         self.log_params.append_to_logs("Loading SAM3 model from Hugging Face...\n")
 
         # Add _sam3_repo to sys.path if not present (needed because .pth files
@@ -322,7 +319,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         """Run a function under bfloat16 autocast for SAM3's fused ops."""
         import torch
 
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        with torch.autocast(device_type=self.execution_device, dtype=torch.bfloat16):
             return func(*args, **kwargs)
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact | dict) -> Image.Image:
