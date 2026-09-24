@@ -11,20 +11,11 @@ dependencies = [
     "numpy",
     "Pillow",
 ]
+# Edit-time only, and equal to the manifest's pip_dependencies so `make deps/sync` is a no-op.
+# The execution set belongs in pip_dependencies_exec, not in an extra: the engine installs it
+# additively into <library>/.venv-exec, whereas an extra would have to co-resolve with this
+# project's own lockfile.
 # Note: sam3 is installed by sam3_library_advanced.py at runtime via the submodule.
-
-# Execution-time only. The engine installs these into <library>/.venv-exec and puts them on
-# sys.path solely inside the process that runs this library's nodes, so a machine that only
-# edits workflows never resolves them. Keeping them out of [project] dependencies is what makes
-# `uv sync` reproduce a real orchestrator instead of one that can import torch.
-[project.optional-dependencies]
-exec = [
-    "torch==2.7.0",
-    "torchvision==0.22.0",
-    "torchaudio==2.7.0",
-    "static_ffmpeg>=2.13.0",
-    "opencv-python-headless>=4.11.0.86",
-]
 
 [tool.uv.sources]
 griptape-nodes-engine = { git = "https://github.com/griptape-ai/griptape-nodes-engine", rev="latest"}

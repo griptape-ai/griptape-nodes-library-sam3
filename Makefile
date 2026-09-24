@@ -56,18 +56,15 @@ version/publish: ## Create and push git tags.
 	@git push -f origin stable
 
 .PHONY: deps/sync
-deps/sync: ## Sync pip_dependencies and pip_dependencies_exec in the library JSON from pyproject.toml.
+deps/sync: ## Sync pip_dependencies in the library JSON from pyproject.toml.
 	@uv run python -c "\
 import tomllib, json; \
 pyproject = tomllib.load(open('pyproject.toml', 'rb')); \
-edit = [d for d in pyproject['project']['dependencies'] if not d.startswith('griptape-nodes')]; \
-execution = pyproject['project'].get('optional-dependencies', {}).get('exec', []); \
+deps = [d for d in pyproject['project']['dependencies'] if not d.startswith('griptape-nodes')]; \
 lib = json.load(open('$(LIBRARY_JSON)')); \
-deps = lib['metadata'].setdefault('dependencies', {}); \
-deps['pip_dependencies'] = edit; \
-deps['pip_dependencies_exec'] = execution; \
+lib['metadata'].setdefault('dependencies', {})['pip_dependencies'] = deps; \
 open('$(LIBRARY_JSON)', 'w').write(json.dumps(lib, indent=4) + '\n'); \
-print(f'Synced {len(edit)} edit-time and {len(execution)} execution dependencies to $(LIBRARY_JSON)')"
+print(f'Synced {len(deps)} dependencies to $(LIBRARY_JSON)')"
 
 .PHONY: install
 install: ## Install all dependencies.
@@ -77,17 +74,9 @@ install: ## Install all dependencies.
 install/core: deps/sync ## Install core dependencies.
 	@uv sync
 
-# Deliberately not --all-extras: the engine splices the default venv onto the orchestrator's
-# sys.path, so installing the exec extra there would make every import succeed locally and hide
-# a manifest that no longer declares what the library needs.
 .PHONY: install/all
 install/all: deps/sync ## Install all dependencies.
-	@uv sync --all-groups
-
-# .venv-exec-local, because the engine owns .venv-exec and rebuilds it from the manifest.
-.PHONY: install/exec
-install/exec: ## Install the execution dependencies into a local scratch venv.
-	@UV_PROJECT_ENVIRONMENT=.venv-exec-local uv sync --extra exec
+	@uv sync --all-groups --all-extras
 
 .PHONY: install/dev
 install/dev: ## Install dev dependencies.
