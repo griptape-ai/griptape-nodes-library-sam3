@@ -8,24 +8,16 @@ authors = [
 readme = "README.md"
 requires-python = "~=3.12.0"
 dependencies = [
-    "griptape-nodes",
     "numpy",
     "Pillow",
 ]
-# Note: sam3, torch, torchvision, torchaudio are installed by sam3_library_advanced.py
-# at runtime via the submodule, not as pip dependencies
+# Note: sam3 is installed by sam3_library_advanced.py at runtime via the submodule.
 
-[tool.uv.sources]
-griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev="latest"}
-
-[tool.hatch.build.targets.wheel]
-packages = ["griptape_nodes_sam3_library"]
-
-
+# Execution-time only. The engine installs these into <library>/.venv-exec and puts them on
+# sys.path solely inside the process that runs this library's nodes, so a machine that only
+# edits workflows never resolves them. Keeping them out of [project] dependencies is what makes
+# `uv sync` reproduce a real orchestrator instead of one that can import torch.
 [project.optional-dependencies]
-# Execution-time only: the engine installs these into <library>/.venv-exec and puts
-# them on sys.path solely inside this library's worker process. They are absent from
-# the machine that only edits workflows, which is the point.
 exec = [
     "torch==2.7.0",
     "torchvision==0.22.0",
@@ -33,12 +25,19 @@ exec = [
     "static_ffmpeg>=2.13.0",
     "opencv-python-headless>=4.11.0.86",
 ]
+
+[tool.uv.sources]
+griptape-nodes-engine = { git = "https://github.com/griptape-ai/griptape-nodes-engine", rev="latest"}
+
+[tool.hatch.build.targets.wheel]
+packages = ["griptape_nodes_sam3_library"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pyright>=1.1.396", "pytest-asyncio>=0.21.0", "ruff>=0.8.0", "pytest"]
+dev = ["pyright>=1.1.396", "pytest-asyncio>=0.21.0", "ruff>=0.8.0", "pytest", "griptape-nodes-engine"]
 
 [tool.ruff]
 line-length = 120
