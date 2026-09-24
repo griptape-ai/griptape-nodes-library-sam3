@@ -77,9 +77,17 @@ install: ## Install all dependencies.
 install/core: deps/sync ## Install core dependencies.
 	@uv sync
 
+# Deliberately not --all-extras: the engine splices the default venv onto the orchestrator's
+# sys.path, so installing the exec extra there would make every import succeed locally and hide
+# a manifest that no longer declares what the library needs.
 .PHONY: install/all
 install/all: deps/sync ## Install all dependencies.
-	@uv sync --all-groups --all-extras
+	@uv sync --all-groups
+
+# .venv-exec-local, because the engine owns .venv-exec and rebuilds it from the manifest.
+.PHONY: install/exec
+install/exec: ## Install the execution dependencies into a local scratch venv.
+	@UV_PROJECT_ENVIRONMENT=.venv-exec-local uv sync --extra exec
 
 .PHONY: install/dev
 install/dev: ## Install dev dependencies.
