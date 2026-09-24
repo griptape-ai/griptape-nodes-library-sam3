@@ -41,8 +41,10 @@
                 "triton-windows<3.4; sys_platform == 'win32'"
             ],
             "pip_install_flags": [
-                "--preview",
-                "--torch-backend=auto"
+                "--extra-index-url",
+                "https://download.pytorch.org/whl/cu128",
+                "--index-strategy",
+                "unsafe-best-match"
             ]
         },
         "resources": {
