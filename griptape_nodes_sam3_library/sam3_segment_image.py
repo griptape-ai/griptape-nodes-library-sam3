@@ -14,8 +14,7 @@ from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
 from PIL import Image
 
-# sam3 and torch live behind the execution-module boundary (execution/models.py),
-# reached via self.execution_module("models") where nodes execute.
+# SAM3 imports are done lazily in _load_model() to allow installation first
 
 logger = logging.getLogger("sam3_nodes_library")
 
@@ -254,44 +253,55 @@ class Sam3SegmentImage(SuccessFailureNode):
             self._handle_failure_exception(e)
 
         finally:
-            # Release VRAM - clear model and processor
-            if self._model is not None or self._processor is not None:
-                # Delete processor first (it holds a reference to model)
-                if self._processor is not None:
-                    del self._processor
-                    self._processor = None
-                if self._model is not None:
-                    del self._model
-                    self._model = None
-                self.log_params.append_to_logs("Model released\n")
+            self._release_model()
 
             # Force garbage collection and clear CUDA cache
             try:
-                if self.execution_module("models").release_cuda():
+                import gc
+
+                gc.collect()
+
+                if self.execution_device == "cuda":
+                    import torch
+
+                    torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self) -> None:
-        """Load or cache the SAM3 model"""
-        if self._model is not None:
-            self.log_params.append_to_logs("Using cached model\n")
+    def _release_model(self) -> None:
+        """Drop the model and processor so the VRAM they hold is freed at the end of a run."""
+        if self._model is None and self._processor is None:
             return
 
+        # The processor holds a reference to the model, so drop it first.
+        self._processor = None
+        self._model = None
+        self.log_params.append_to_logs("Model released\n")
+
+    def _load_model(self) -> None:
+        """Load the SAM3 model."""
         self.log_params.append_to_logs("Loading SAM3 model from Hugging Face...\n")
 
         try:
-            models = self.execution_module("models")
+            # Deferred: sam3 is an execution dependency, absent from the orchestrator that
+            # imports this module to build the node class.
+            from sam3 import build_sam3_image_model
+            from sam3.model.sam3_image_processor import Sam3Processor
 
             # Load the model (downloads from Hugging Face automatically)
-            self._model = models.build_sam3_image_model()
+            self._model = build_sam3_image_model()
 
             # Get score threshold from parameter
             score_threshold = self.get_parameter_value("score_threshold")
-            self._processor = models.Sam3Processor(self._model, confidence_threshold=score_threshold)
+            self._processor = Sam3Processor(self._model, confidence_threshold=score_threshold)
 
             self.log_params.append_to_logs("Model loaded successfully\n")
 
+        except ImportError as e:
+            error_msg = "sam3 is not importable. The library's execution environment is incomplete."
+            self.log_params.append_to_logs(f"{error_msg}\n")
+            raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load model: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")
@@ -299,7 +309,10 @@ class Sam3SegmentImage(SuccessFailureNode):
 
     def _run_with_autocast(self, func, *args, **kwargs):
         """Run a function under bfloat16 autocast for SAM3's fused ops."""
-        return self.execution_module("models").run_with_autocast(func, *args, **kwargs)
+        import torch
+
+        with torch.autocast(device_type=self.execution_device, dtype=torch.bfloat16):
+            return func(*args, **kwargs)
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact | dict) -> Image.Image:
         """Convert image artifact to PIL Image"""

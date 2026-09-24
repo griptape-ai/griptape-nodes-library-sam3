@@ -338,45 +338,67 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
-            # Release VRAM
-            if self._predictor is not None:
-                if session_id is not None:
-                    try:
-                        self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
-                        self.log_params.append_to_logs("Session closed\n")
-                    except Exception:
-                        pass
-
-                try:
-                    self._predictor.shutdown()
-                    self.log_params.append_to_logs("Multiplex predictor shut down\n")
-                except Exception as shutdown_error:
-                    logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
-                del self._predictor
-                self._predictor = None
+            self._release_predictor(session_id)
 
             # Force garbage collection and clear CUDA cache
             try:
-                if self.execution_module("models").release_cuda():
+                import gc
+
+                gc.collect()
+
+                if self.execution_device == "cuda":
+                    import torch
+
+                    torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self, use_compile: bool = False) -> None:
-        """Load the SAM3.1 Multiplex video predictor"""
-        if self._predictor is not None:
-            self.log_params.append_to_logs("Using cached multiplex predictor\n")
+    def _release_predictor(self, session_id: str | None) -> None:
+        """Close the session and shut the predictor down so the GPU memory it holds is freed."""
+        if self._predictor is None:
             return
 
+        # Closing the session first releases the per-session GPU allocations.
+        if session_id is not None:
+            try:
+                self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
+                self.log_params.append_to_logs("Session closed\n")
+            except Exception:
+                pass
+
+        try:
+            self._predictor.shutdown()
+            self.log_params.append_to_logs("Multiplex predictor shut down\n")
+        except Exception as shutdown_error:
+            logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
+
+        self._predictor = None
+
+    def _load_model(self, use_compile: bool = False) -> None:
+        """Load the SAM3.1 Multiplex video predictor."""
         self.log_params.append_to_logs("Loading SAM3.1 Multiplex video predictor...\n")
 
         try:
-            models = self.execution_module("models")
+            # Deferred: torch and sam3 are execution dependencies, absent from the orchestrator
+            # that imports this module to build the node class.
+            import torch
+            from sam3.model_builder import build_sam3_multiplex_video_predictor
 
             # Log GPU/CUDA diagnostic info
-            self.log_params.append_to_logs(models.gpu_diagnostics())
+            cuda_available = self.execution_device == "cuda"
+            device_count = torch.cuda.device_count() if cuda_available else 0
+            self.log_params.append_to_logs(
+                f"GPU diagnostics: torch={torch.__version__}, "
+                f"cuda_built={torch.version.cuda}, "
+                f"cuda_available={cuda_available}, "
+                f"device_count={device_count}\n"
+            )
+            if cuda_available:
+                for i in range(device_count):
+                    self.log_params.append_to_logs(f"  GPU {i}: {torch.cuda.get_device_name(i)}\n")
 
-            if not models.cuda_device_count():
+            if not cuda_available:
                 self.log_params.append_to_logs(
                     "No GPU available. SAM3.1 Multiplex video segmentation requires a GPU. "
                     "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
@@ -384,7 +406,7 @@ class Sam3MultiplexVideo(SuccessFailureNode):
 
             # Build the SAM3.1 Multiplex video predictor
             # Disable Flash Attention 3 (requires flash-attn package which is hard to install on Windows)
-            self._predictor = models.build_sam3_multiplex_video_predictor(
+            self._predictor = build_sam3_multiplex_video_predictor(
                 compile=use_compile,
                 use_fa3=False,
             )
@@ -392,6 +414,10 @@ class Sam3MultiplexVideo(SuccessFailureNode):
             compile_status = "enabled" if use_compile else "disabled"
             self.log_params.append_to_logs(f"Multiplex predictor loaded (torch.compile: {compile_status})\n")
 
+        except ImportError as e:
+            error_msg = "sam3 is not importable. The library's execution environment is incomplete."
+            self.log_params.append_to_logs(f"{error_msg}\n")
+            raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load multiplex predictor: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")

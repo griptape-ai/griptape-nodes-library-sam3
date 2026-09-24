@@ -15,8 +15,7 @@ from griptape_nodes.exe_types.param_components.project_file_parameter import Pro
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
 
-# sam3 and torch live behind the execution-module boundary (execution/models.py),
-# reached via self.execution_module("models") where nodes execute.
+# SAM3 imports are done lazily in _load_model() to allow installation first
 
 logger = logging.getLogger("sam3_nodes_library")
 
@@ -322,48 +321,68 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
-            # Release VRAM - close session and shutdown predictor
-            if self._predictor is not None:
-                # Close session first to free GPU resources
-                if session_id is not None:
-                    try:
-                        self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
-                        self.log_params.append_to_logs("Session closed\n")
-                    except Exception:
-                        pass
-
-                # Then shutdown the predictor
-                try:
-                    self._predictor.shutdown()
-                    self.log_params.append_to_logs("Video predictor shut down\n")
-                except Exception as shutdown_error:
-                    logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
-                del self._predictor
-                self._predictor = None
+            self._release_predictor(session_id)
 
             # Force garbage collection and clear CUDA cache
             try:
-                if self.execution_module("models").release_cuda():
+                import gc
+
+                gc.collect()
+
+                if self.execution_device == "cuda":
+                    import torch
+
+                    torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self) -> None:
-        """Load or cache the SAM3 video predictor"""
-        if self._predictor is not None:
-            self.log_params.append_to_logs("Using cached video predictor\n")
+    def _release_predictor(self, session_id: str | None) -> None:
+        """Close the session and shut the predictor down so the GPU memory it holds is freed."""
+        if self._predictor is None:
             return
 
+        # Closing the session first releases the per-session GPU allocations.
+        if session_id is not None:
+            try:
+                self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
+                self.log_params.append_to_logs("Session closed\n")
+            except Exception:
+                pass
+
+        try:
+            self._predictor.shutdown()
+            self.log_params.append_to_logs("Video predictor shut down\n")
+        except Exception as shutdown_error:
+            logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
+
+        self._predictor = None
+
+    def _load_model(self) -> None:
+        """Load the SAM3 video predictor."""
         self.log_params.append_to_logs("Loading SAM3 video predictor...\n")
 
         try:
-            models = self.execution_module("models")
+            # Deferred: torch and sam3 are execution dependencies, absent from the orchestrator
+            # that imports this module to build the node class.
+            import torch
+            from sam3.model_builder import build_sam3_video_predictor
 
             # Log GPU/CUDA diagnostic info to help debug cloud deployment issues
-            self.log_params.append_to_logs(models.gpu_diagnostics())
+            cuda_available = self.execution_device == "cuda"
+            device_count = torch.cuda.device_count() if cuda_available else 0
+            self.log_params.append_to_logs(
+                f"GPU diagnostics: torch={torch.__version__}, "
+                f"cuda_built={torch.version.cuda}, "
+                f"cuda_available={cuda_available}, "
+                f"device_count={device_count}\n"
+            )
+            if cuda_available:
+                for i in range(device_count):
+                    self.log_params.append_to_logs(f"  GPU {i}: {torch.cuda.get_device_name(i)}\n")
 
             # Get available GPUs
-            gpus_to_use = list(range(models.cuda_device_count()))
+            gpus_to_use = list(range(device_count))
 
             if not gpus_to_use:
                 self.log_params.append_to_logs(
@@ -372,10 +391,14 @@ class Sam3SegmentVideo(SuccessFailureNode):
                 )
 
             # Build the video predictor
-            self._predictor = models.build_sam3_video_predictor(gpus_to_use=gpus_to_use)
+            self._predictor = build_sam3_video_predictor(gpus_to_use=gpus_to_use)
 
             self.log_params.append_to_logs("Video predictor loaded successfully\n")
 
+        except ImportError as e:
+            error_msg = "sam3 is not importable. The library's execution environment is incomplete."
+            self.log_params.append_to_logs(f"{error_msg}\n")
+            raise ImportError(error_msg) from e
         except Exception as e:
             error_msg = f"Failed to load video predictor: {str(e)}"
             self.log_params.append_to_logs(f"{error_msg}\n")

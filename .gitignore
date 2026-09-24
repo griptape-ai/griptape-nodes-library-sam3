@@ -1,4 +1,6 @@
 .env
 .venv
+.venv-exec
+.venv-exec-local
 **/__pycache__/
 .claude
