@@ -1,6 +1,6 @@
 [project]
 name = "griptape-nodes-sam3-library"
-version = "0.1.0"
+version = "0.6.0"
 description = "Griptape Node Library for SAM3 (Segment Anything with Concepts)"
 authors = [
     {name = "Your Name",email = "you@example.com"}
@@ -8,9 +8,13 @@ authors = [
 readme = "README.md"
 requires-python = "~=3.12.0"
 dependencies = [
+    "numpy",
+    "Pillow",
 ]
-# Note: sam3, torch, torchvision, torchaudio are installed by sam3_library_advanced.py
-# at runtime via the submodule, not as pip dependencies
+# Edit-time only, and equal to the manifest's pip_dependencies so `make deps/sync` is a no-op.
+# The execution set belongs in pip_dependencies_exec, not in an extra: the engine installs it
+# additively into <library>/.venv-exec, whereas an extra would have to co-resolve with this
+# project's own lockfile.
 
 [tool.uv.sources]
 griptape-nodes-engine = { git = "https://github.com/griptape-ai/griptape-nodes-engine", rev="latest"}
