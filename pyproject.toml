@@ -1,6 +1,6 @@
 [project]
 name = "griptape-nodes-sam3-library"
-version = "0.1.0"
+version = "0.6.0"
 description = "Griptape Node Library for SAM3 (Segment Anything with Concepts)"
 authors = [
     {name = "Your Name",email = "you@example.com"}
