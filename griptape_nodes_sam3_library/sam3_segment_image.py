@@ -289,8 +289,11 @@ class Sam3SegmentImage(SuccessFailureNode):
             from sam3 import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
-            # Load the model (downloads from Hugging Face automatically)
-            self._model = build_sam3_image_model()
+            # Load the model (downloads from Hugging Face automatically). Placed with
+            # `execution_device` rather than the builder's own `torch.cuda.is_available()` default,
+            # which is a second answer to the same question and would leave the model on a device
+            # the autocast in `_run_with_autocast` does not use.
+            self._model = build_sam3_image_model(device=self.execution_device)
 
             # Get score threshold from parameter
             score_threshold = self.get_parameter_value("score_threshold")
