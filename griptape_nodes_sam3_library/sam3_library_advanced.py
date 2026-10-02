@@ -6,6 +6,7 @@ SAM3.1 adds Object Multiplex for ~7x faster multi-object tracking.
 import configparser
 import json
 import logging
+import os
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -39,6 +40,9 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             logger.info("SAM3 or dependencies not found, beginning installation process...")
             self._install_sam3_dependencies()
 
+        # Must run after install
+        self._configure_triton_compiler()
+
         # Always run — the SAM3 submodule pulls in opencv-python (GUI variant) as a transitive
         # dependency. That variant requires libGL.so.1 which is absent in headless environments
         # like Griptape Cloud. If both opencv-python and opencv-python-headless are installed,
@@ -56,6 +60,22 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
     def _get_library_root(self) -> Path:
         """Get the library root directory (where .venv lives)."""
         return Path(__file__).parent
+
+    def _configure_triton_compiler(self) -> None:
+        """Windows only: point triton at the tcc bundled in the library venv, before sam3 is ever imported."""
+        if not GriptapeNodes.OSManager().is_windows():
+            return
+
+        tcc_path = (
+            self._get_library_root() / ".venv" / "Lib" / "site-packages" / "triton" / "runtime" / "tcc" / "tcc.exe"
+        )
+
+        if not tcc_path.exists():
+            logger.warning(f"Bundled triton tcc not found at {tcc_path}, leaving CC unchanged")
+            return
+
+        os.environ.setdefault("CC", str(tcc_path))
+        logger.info(f"CC is set to: {os.environ['CC']}")
 
     def _get_venv_python_path(self) -> Path:
         """Get the Python executable path from the library's venv.
@@ -151,7 +171,8 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             # Step 1/3: Install triton (platform-specific)
             logger.info("Step 1/3: Installing triton...")
             if GriptapeNodes.OSManager().is_windows():
-                self._run_pip_install(["triton-windows"])
+                # torch 2.7.x pairs with triton 3.3.x
+                self._run_pip_install(["triton-windows>=3.3,<3.4"])
             else:
                 self._run_pip_install(["triton"])
 
