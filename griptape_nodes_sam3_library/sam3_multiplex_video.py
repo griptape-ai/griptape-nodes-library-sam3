@@ -14,8 +14,11 @@ from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
+from huggingface_hub import try_to_load_from_cache
 
 logger = logging.getLogger("sam3_nodes_library")
+
+MULTIPLEX_CHECKPOINT_FILENAME = "sam3.1_multiplex.pt"
 
 
 class Sam3MultiplexVideo(SuccessFailureNode):
@@ -338,22 +341,7 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to clean up temp directory: {cleanup_error}")
 
-            # Release VRAM
-            if self._predictor is not None:
-                if session_id is not None:
-                    try:
-                        self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
-                        self.log_params.append_to_logs("Session closed\n")
-                    except Exception:
-                        pass
-
-                try:
-                    self._predictor.shutdown()
-                    self.log_params.append_to_logs("Multiplex predictor shut down\n")
-                except Exception as shutdown_error:
-                    logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
-                del self._predictor
-                self._predictor = None
+            self._release_predictor(session_id)
 
             # Force garbage collection and clear CUDA cache
             try:
@@ -361,35 +349,47 @@ class Sam3MultiplexVideo(SuccessFailureNode):
 
                 gc.collect()
 
-                import torch
+                if self.execution_device == "cuda":
+                    import torch
 
-                if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self, use_compile: bool = False) -> None:
-        """Load the SAM3.1 Multiplex video predictor"""
-        if self._predictor is not None:
-            self.log_params.append_to_logs("Using cached multiplex predictor\n")
+    def _release_predictor(self, session_id: str | None) -> None:
+        """Close the session and shut the predictor down so the GPU memory it holds is freed."""
+        if self._predictor is None:
             return
 
-        self.log_params.append_to_logs("Loading SAM3.1 Multiplex video predictor...\n")
-
-        # Add _sam3_repo to sys.path if not present
-        import sys
-
-        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
-        if sam3_repo_path not in sys.path:
-            sys.path.insert(0, sam3_repo_path)
+        # Closing the session first releases the per-session GPU allocations.
+        if session_id is not None:
+            try:
+                self._predictor.handle_request(request={"type": "close_session", "session_id": session_id})
+                self.log_params.append_to_logs("Session closed\n")
+            except Exception:
+                pass
 
         try:
+            self._predictor.shutdown()
+            self.log_params.append_to_logs("Multiplex predictor shut down\n")
+        except Exception as shutdown_error:
+            logger.warning(f"Failed to shutdown predictor: {shutdown_error}")
+
+        self._predictor = None
+
+    def _load_model(self, use_compile: bool = False) -> None:
+        """Load the SAM3.1 Multiplex video predictor."""
+        self.log_params.append_to_logs("Loading SAM3.1 Multiplex video predictor...\n")
+
+        try:
+            # Deferred: torch and sam3 are execution dependencies, absent from the orchestrator
+            # that imports this module to build the node class.
             import torch
             from sam3.model_builder import build_sam3_multiplex_video_predictor
 
             # Log GPU/CUDA diagnostic info
-            cuda_available = torch.cuda.is_available()
+            cuda_available = self.execution_device == "cuda"
             device_count = torch.cuda.device_count() if cuda_available else 0
             self.log_params.append_to_logs(
                 f"GPU diagnostics: torch={torch.__version__}, "
@@ -407,9 +407,23 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                     "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
                 )
 
-            # Build the SAM3.1 Multiplex video predictor
+            repo_id, revision = self._model_repo_parameter.get_repo_revision()
+            checkpoint_path = try_to_load_from_cache(repo_id, MULTIPLEX_CHECKPOINT_FILENAME, revision=revision)
+            if not isinstance(checkpoint_path, str):
+                msg = (
+                    f"Attempted to load '{MULTIPLEX_CHECKPOINT_FILENAME}' for node '{self.name}'. "
+                    f"Failed with repo='{repo_id}' revision='{revision}' because the file is not in the local HuggingFace cache."
+                )
+                raise FileNotFoundError(msg)
+
+            from sdpa_fallback import allow_sdpa_fallback
+
+            allow_sdpa_fallback()
+
+            # Build the SAM3.1 Multiplex video predictor from the checkpoint cached for the selected repo
             # Disable Flash Attention 3 (requires flash-attn package which is hard to install on Windows)
             self._predictor = build_sam3_multiplex_video_predictor(
+                checkpoint_path=checkpoint_path,
                 compile=use_compile,
                 use_fa3=False,
             )
@@ -418,7 +432,7 @@ class Sam3MultiplexVideo(SuccessFailureNode):
             self.log_params.append_to_logs(f"Multiplex predictor loaded (torch.compile: {compile_status})\n")
 
         except ImportError as e:
-            error_msg = "SAM3.1 library not installed. Please check the installation logs."
+            error_msg = "sam3 is not importable. The library's execution environment is incomplete."
             self.log_params.append_to_logs(f"{error_msg}\n")
             raise ImportError(error_msg) from e
         except Exception as e:

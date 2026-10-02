@@ -12,11 +12,14 @@ from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
+from huggingface_hub import try_to_load_from_cache
 from PIL import Image
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
 
 logger = logging.getLogger("sam3_nodes_library")
+
+CHECKPOINT_FILENAME = "sam3.pt"
 
 
 class Sam3SegmentImage(SuccessFailureNode):
@@ -30,10 +33,10 @@ class Sam3SegmentImage(SuccessFailureNode):
         super().__init__(name, metadata)
 
         # Model selection parameter (triggers model manager if not downloaded)
-        # SAM3.1 includes Object Multiplex for faster multi-object tracking
         self._model_repo_parameter = HuggingFaceRepoParameter(
             self,
-            repo_ids=["facebook/sam3.1", "facebook/sam3"],
+            repo_ids=["facebook/sam3"],
+            deprecated_repo_ids=["facebook/sam3.1"],
             parameter_name="model",
         )
         self._model_repo_parameter.add_input_parameters()
@@ -253,16 +256,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             self._handle_failure_exception(e)
 
         finally:
-            # Release VRAM - clear model and processor
-            if self._model is not None or self._processor is not None:
-                # Delete processor first (it holds a reference to model)
-                if self._processor is not None:
-                    del self._processor
-                    self._processor = None
-                if self._model is not None:
-                    del self._model
-                    self._model = None
-                self.log_params.append_to_logs("Model released\n")
+            self._release_model()
 
             # Force garbage collection and clear CUDA cache
             try:
@@ -270,38 +264,50 @@ class Sam3SegmentImage(SuccessFailureNode):
 
                 gc.collect()
 
-                import torch
+                if self.execution_device == "cuda":
+                    import torch
 
-                if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     self.log_params.append_to_logs("CUDA cache cleared\n")
             except Exception:
                 pass
 
-    def _load_model(self) -> None:
-        """Load or cache the SAM3 model"""
-        if self._model is not None:
-            self.log_params.append_to_logs("Using cached model\n")
+    def _release_model(self) -> None:
+        """Drop the model and processor so the VRAM they hold is freed at the end of a run."""
+        if self._model is None and self._processor is None:
             return
 
+        # The processor holds a reference to the model, so drop it first.
+        self._processor = None
+        self._model = None
+        self.log_params.append_to_logs("Model released\n")
+
+    def _load_model(self) -> None:
+        """Load the SAM3 model."""
         self.log_params.append_to_logs("Loading SAM3 model from Hugging Face...\n")
 
-        # Add _sam3_repo to sys.path if not present (needed because .pth files
-        # aren't processed when running from griptape-nodes' venv)
-        import sys
-        from pathlib import Path
-
-        sam3_repo_path = str(Path(__file__).parent / "_sam3_repo")
-        if sam3_repo_path not in sys.path:
-            sys.path.insert(0, sam3_repo_path)
-
         try:
-            # Lazy import SAM3 modules (installed by sam3_library_advanced.py)
+            # Deferred: sam3 is an execution dependency, absent from the orchestrator that
+            # imports this module to build the node class.
             from sam3 import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
-            # Load the model (downloads from Hugging Face automatically)
-            self._model = build_sam3_image_model()
+            # Load the model from the checkpoint cached for the selected repo. `device` comes from
+            # `execution_device` rather than the builder's own `torch.cuda.is_available()` default,
+            # which is a second answer to the same question and would leave the model on a device
+            # the autocast in `_run_with_autocast` does not use.
+            repo_id, revision = self._model_repo_parameter.get_repo_revision()
+            checkpoint_path = try_to_load_from_cache(repo_id, CHECKPOINT_FILENAME, revision=revision)
+            if not isinstance(checkpoint_path, str):
+                msg = (
+                    f"Attempted to load '{CHECKPOINT_FILENAME}' for node '{self.name}'. "
+                    f"Failed with repo='{repo_id}' revision='{revision}' because the file is not in the local HuggingFace cache. "
+                    f"Select a repo that contains '{CHECKPOINT_FILENAME}' (e.g. facebook/sam3)."
+                )
+                raise FileNotFoundError(msg)
+            self._model = build_sam3_image_model(
+                checkpoint_path=checkpoint_path, load_from_HF=False, device=self.execution_device
+            )
 
             # Get score threshold from parameter
             score_threshold = self.get_parameter_value("score_threshold")
@@ -310,7 +316,7 @@ class Sam3SegmentImage(SuccessFailureNode):
             self.log_params.append_to_logs("Model loaded successfully\n")
 
         except ImportError as e:
-            error_msg = "SAM3 library not installed. Please check the installation logs."
+            error_msg = "sam3 is not importable. The library's execution environment is incomplete."
             self.log_params.append_to_logs(f"{error_msg}\n")
             raise ImportError(error_msg) from e
         except Exception as e:
@@ -322,7 +328,7 @@ class Sam3SegmentImage(SuccessFailureNode):
         """Run a function under bfloat16 autocast for SAM3's fused ops."""
         import torch
 
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        with torch.autocast(device_type=self.execution_device, dtype=torch.bfloat16):
             return func(*args, **kwargs)
 
     def _artifact_to_pil(self, artifact: ImageArtifact | ImageUrlArtifact | dict) -> Image.Image:

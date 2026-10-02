@@ -1,3 +1,0 @@
-[submodule "griptape_nodes_sam3_library/_sam3_repo"]
-	path = griptape_nodes_sam3_library/_sam3_repo
-	url = https://github.com/facebookresearch/sam3.git
