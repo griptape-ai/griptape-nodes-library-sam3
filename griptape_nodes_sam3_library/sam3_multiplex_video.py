@@ -419,6 +419,10 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                 )
                 raise FileNotFoundError(msg)
 
+            from sdpa_fallback import allow_sdpa_fallback
+
+            allow_sdpa_fallback()
+
             # Build the SAM3.1 Multiplex video predictor
             # Disable Flash Attention 3 (requires flash-attn package which is hard to install on Windows)
             self._predictor = build_sam3_multiplex_video_predictor(
