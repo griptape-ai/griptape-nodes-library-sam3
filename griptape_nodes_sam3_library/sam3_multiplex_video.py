@@ -14,8 +14,11 @@ from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
+from huggingface_hub import try_to_load_from_cache
 
 logger = logging.getLogger("sam3_nodes_library")
+
+MULTIPLEX_CHECKPOINT_FILENAME = "sam3.1_multiplex.pt"
 
 
 class Sam3MultiplexVideo(SuccessFailureNode):
@@ -407,9 +410,19 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                     "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
                 )
 
+            repo_id, revision = self._model_repo_parameter.get_repo_revision()
+            checkpoint_path = try_to_load_from_cache(repo_id, MULTIPLEX_CHECKPOINT_FILENAME, revision=revision)
+            if not isinstance(checkpoint_path, str):
+                msg = (
+                    f"Attempted to load '{MULTIPLEX_CHECKPOINT_FILENAME}' for node '{self.name}'. "
+                    f"Failed with repo='{repo_id}' revision='{revision}' because the file is not in the local HuggingFace cache."
+                )
+                raise FileNotFoundError(msg)
+
             # Build the SAM3.1 Multiplex video predictor
             # Disable Flash Attention 3 (requires flash-attn package which is hard to install on Windows)
             self._predictor = build_sam3_multiplex_video_predictor(
+                checkpoint_path=checkpoint_path,
                 compile=use_compile,
                 use_fa3=False,
             )
