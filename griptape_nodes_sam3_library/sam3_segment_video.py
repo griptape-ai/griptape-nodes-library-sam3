@@ -14,10 +14,13 @@ from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
+from huggingface_hub import try_to_load_from_cache
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
 
 logger = logging.getLogger("sam3_nodes_library")
+
+CHECKPOINT_FILENAME = "sam3.pt"
 
 
 class Sam3SegmentVideo(SuccessFailureNode):
@@ -31,10 +34,10 @@ class Sam3SegmentVideo(SuccessFailureNode):
         super().__init__(name, metadata)
 
         # Model selection parameter (triggers model manager if not downloaded)
-        # Use SAM3.1 Multiplex Video node for faster multi-object tracking with SAM3.1
         self._model_repo_parameter = HuggingFaceRepoParameter(
             self,
-            repo_ids=["facebook/sam3.1", "facebook/sam3"],
+            repo_ids=["facebook/sam3"],
+            deprecated_repo_ids=["facebook/sam3.1"],
             parameter_name="model",
         )
         self._model_repo_parameter.add_input_parameters()
@@ -390,8 +393,17 @@ class Sam3SegmentVideo(SuccessFailureNode):
                     "If running on Griptape Cloud, ensure the GPU option is enabled on the Start Flow node.\n"
                 )
 
-            # Build the video predictor
-            self._predictor = build_sam3_video_predictor(gpus_to_use=gpus_to_use)
+            # Build the video predictor from the checkpoint cached for the selected repo
+            repo_id, revision = self._model_repo_parameter.get_repo_revision()
+            checkpoint_path = try_to_load_from_cache(repo_id, CHECKPOINT_FILENAME, revision=revision)
+            if not isinstance(checkpoint_path, str):
+                msg = (
+                    f"Attempted to load '{CHECKPOINT_FILENAME}' for node '{self.name}'. "
+                    f"Failed with repo='{repo_id}' revision='{revision}' because the file is not in the local HuggingFace cache."
+                )
+                raise FileNotFoundError(msg)
+
+            self._predictor = build_sam3_video_predictor(gpus_to_use=gpus_to_use, checkpoint_path=checkpoint_path)
 
             self.log_params.append_to_logs("Video predictor loaded successfully\n")
 

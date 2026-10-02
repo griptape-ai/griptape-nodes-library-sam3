@@ -459,6 +459,7 @@ name = "griptape-nodes-sam3-library"
 version = "0.6.0"
 source = { editable = "." }
 dependencies = [
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "pillow" },
 ]
@@ -474,6 +475,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "pillow" },
 ]

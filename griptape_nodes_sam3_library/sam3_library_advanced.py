@@ -4,6 +4,9 @@ SAM3.1 adds Object Multiplex for ~7x faster multi-object tracking.
 """
 
 import logging
+import os
+import sys
+from pathlib import Path
 
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
@@ -23,6 +26,9 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
         msg = f"Starting to load nodes for '{library_data.name}' library..."
         logger.info(msg)
 
+        # Must run before sam3 is imported, which first happens when a node loads a model.
+        self._configure_triton_compiler()
+
     def after_library_nodes_loaded(self, library_data: LibrarySchema, library: Library) -> None:
         """Called after all nodes have been loaded from the library."""
         msg = f"Finished loading nodes for '{library_data.name}' library"
@@ -30,6 +36,29 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
 
         # Configure PyTorch for optimal GPU performance
         self._configure_pytorch_settings()
+
+    def _configure_triton_compiler(self) -> None:
+        """Windows only: point triton at the tcc bundled in its own wheel.
+
+        triton-windows is an execution dependency, so it resolves only in the worker that hosts
+        this library's execution. On the orchestrator this is a no-op.
+        """
+        if sys.platform != "win32":
+            return
+
+        try:
+            import triton
+        except ImportError:
+            logger.debug("triton not importable here (orchestrator); skipping CC configuration")
+            return
+
+        tcc_path = Path(triton.__file__).parent / "runtime" / "tcc" / "tcc.exe"
+        if not tcc_path.exists():
+            logger.warning(f"Bundled triton tcc not found at {tcc_path}, leaving CC unchanged")
+            return
+
+        os.environ.setdefault("CC", str(tcc_path))
+        logger.info(f"CC is set to: {os.environ['CC']}")
 
     def _configure_pytorch_settings(self) -> None:
         """Configure PyTorch TF32 settings for Ampere+ GPUs.

@@ -12,11 +12,14 @@ from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.files.file import File
 from griptape_nodes.traits.slider import Slider
+from huggingface_hub import try_to_load_from_cache
 from PIL import Image
 
 # SAM3 imports are done lazily in _load_model() to allow installation first
 
 logger = logging.getLogger("sam3_nodes_library")
+
+CHECKPOINT_FILENAME = "sam3.pt"
 
 
 class Sam3SegmentImage(SuccessFailureNode):
@@ -30,10 +33,10 @@ class Sam3SegmentImage(SuccessFailureNode):
         super().__init__(name, metadata)
 
         # Model selection parameter (triggers model manager if not downloaded)
-        # SAM3.1 includes Object Multiplex for faster multi-object tracking
         self._model_repo_parameter = HuggingFaceRepoParameter(
             self,
-            repo_ids=["facebook/sam3.1", "facebook/sam3"],
+            repo_ids=["facebook/sam3"],
+            deprecated_repo_ids=["facebook/sam3.1"],
             parameter_name="model",
         )
         self._model_repo_parameter.add_input_parameters()
@@ -289,11 +292,22 @@ class Sam3SegmentImage(SuccessFailureNode):
             from sam3 import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
-            # Load the model (downloads from Hugging Face automatically). Placed with
+            # Load the model from the checkpoint cached for the selected repo. `device` comes from
             # `execution_device` rather than the builder's own `torch.cuda.is_available()` default,
             # which is a second answer to the same question and would leave the model on a device
             # the autocast in `_run_with_autocast` does not use.
-            self._model = build_sam3_image_model(device=self.execution_device)
+            repo_id, revision = self._model_repo_parameter.get_repo_revision()
+            checkpoint_path = try_to_load_from_cache(repo_id, CHECKPOINT_FILENAME, revision=revision)
+            if not isinstance(checkpoint_path, str):
+                msg = (
+                    f"Attempted to load '{CHECKPOINT_FILENAME}' for node '{self.name}'. "
+                    f"Failed with repo='{repo_id}' revision='{revision}' because the file is not in the local HuggingFace cache. "
+                    f"Select a repo that contains '{CHECKPOINT_FILENAME}' (e.g. facebook/sam3)."
+                )
+                raise FileNotFoundError(msg)
+            self._model = build_sam3_image_model(
+                checkpoint_path=checkpoint_path, load_from_HF=False, device=self.execution_device
+            )
 
             # Get score threshold from parameter
             score_threshold = self.get_parameter_value("score_threshold")
