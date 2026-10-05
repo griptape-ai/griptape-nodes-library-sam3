@@ -3,7 +3,6 @@
 SAM3.1 adds Object Multiplex for ~7x faster multi-object tracking.
 """
 
-import configparser
 import json
 import logging
 import os
@@ -308,43 +307,6 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             text=True,
         )
 
-    def _sync_submodule_info_to_json(self, submodule_dir: Path, gitmodules_path: Path) -> None:
-        """Read the checked-out commit and URL and write them to griptape-nodes-library.json.
-
-        Keeps the JSON in sync with local dev so deployed environments always
-        have the correct pinned commit to clone.
-        """
-        result = subprocess.run(
-            ["git", "-C", str(submodule_dir), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        commit = result.stdout.strip()
-
-        # Find the URL for this submodule in .gitmodules by matching its path
-        repo_root = gitmodules_path.parent
-        config = configparser.ConfigParser()
-        config.read(gitmodules_path)
-        url = None
-        for section in config.sections():
-            if (repo_root / config[section]["path"]).resolve() == submodule_dir.resolve():
-                url = config[section]["url"]
-                break
-
-        if not url:
-            logger.warning(f"Could not find URL for {submodule_dir} in .gitmodules, skipping JSON sync")
-            return
-
-        json_path = self._get_library_root() / "griptape-nodes-library.json"
-        with json_path.open() as f:
-            data = json.load(f)
-        data["metadata"]["submodule_info"]["url"] = url
-        data["metadata"]["submodule_info"]["commit"] = commit
-        with json_path.open("w") as f:
-            json.dump(data, f, indent=2)
-        logger.info(f"Updated griptape-nodes-library.json submodule_info: url={url}, commit={commit}")
-
     def _init_sam3_submodule(self) -> Path:
         """Initialize the SAM3 git submodule."""
         library_root = self._get_library_root()
@@ -361,7 +323,6 @@ class Sam3LibraryAdvanced(AdvancedNodeLibrary):
             if gitmodules_path.exists():
                 logger.info(f"Found .gitmodules at {gitmodules_path}")
                 self._init_submodules_from_gitmodules(gitmodules_path)
-                self._sync_submodule_info_to_json(sam3_submodule_dir, gitmodules_path)
                 break
             current = current.parent
         else:

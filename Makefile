@@ -66,6 +66,10 @@ lib['metadata'].setdefault('dependencies', {})['pip_dependencies'] = deps; \
 open('$(LIBRARY_JSON)', 'w').write(json.dumps(lib, indent=4) + '\n'); \
 print(f'Synced {len(deps)} dependencies to $(LIBRARY_JSON)')"
 
+.PHONY: submodule/sync
+submodule/sync: ## Sync submodule_info in the library JSON from the SAM3 git submodule.
+	@uv run python scripts/sync_submodule_info.py
+
 .PHONY: install
 install: ## Install all dependencies.
 	@make install/all
@@ -96,7 +100,7 @@ fix: ## Fix project.
 	@uv run ruff check --fix --unsafe-fixes
 
 .PHONY: check
-check: check/format check/lint check/types ## Run all checks.
+check: check/format check/lint check/types check/submodule ## Run all checks.
 
 .PHONY: check/format
 check/format:
@@ -109,6 +113,10 @@ check/lint:
 .PHONY: check/types
 check/types:
 	@uv run pyright .
+
+.PHONY: check/submodule
+check/submodule:
+	@uv run python scripts/sync_submodule_info.py --check
 
 .DEFAULT_GOAL := help
 .PHONY: help
