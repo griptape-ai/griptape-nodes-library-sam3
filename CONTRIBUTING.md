@@ -32,6 +32,7 @@ Individual checks:
 make check/format   # ruff format --check
 make check/lint     # ruff check
 make check/types    # pyright
+make check/submodule  # submodule_info matches the SAM3 submodule
 ```
 
 ### Fixing Issues
@@ -51,6 +52,16 @@ make deps/sync
 ```
 
 This is also run automatically as part of `make install/core` and `make install/all`.
+
+### Submodule Sync
+
+The `submodule_info` field in the library JSON is the fallback the library clones SAM3 from when it is installed without git metadata. Run this after bumping the `_sam3_repo` submodule:
+
+```bash
+make submodule/sync
+```
+
+`make check` fails if `submodule_info` does not match the URL in `.gitmodules` and the commit pinned in the git index.
 
 ## CI
 
