@@ -15,8 +15,6 @@ from griptape_nodes.traits.slider import Slider
 from huggingface_hub import try_to_load_from_cache
 from PIL import Image
 
-# SAM3 imports are done lazily in _load_model() to allow installation first
-
 logger = logging.getLogger("sam3_nodes_library")
 
 CHECKPOINT_FILENAME = "sam3.pt"
