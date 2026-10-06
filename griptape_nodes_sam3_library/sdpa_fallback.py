@@ -1,4 +1,11 @@
+"""Flash-attention fallback for SAM3's decoder attention.
+
+torch and sam3 are execution dependencies, so this module is importable only in the worker that
+hosts this library's execution. Import it from the model-loading path, never at module scope.
+"""
+
 import torch
+from sam3.model import decoder
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
@@ -7,13 +14,10 @@ def allow_sdpa_fallback() -> None:
     if torch.backends.cuda.is_flash_attention_available():
         return
 
-    # The nodes add the sam3 repo to sys.path at runtime, so it can't be imported at module level.
-    from sam3.model import decoder
-
     if not hasattr(decoder, "sdpa_kernel"):
         msg = (
             "Attempted to patch 'sam3.model.decoder.sdpa_kernel' for the flash-attention fallback. "
-            "Failed because the module no longer exposes 'sdpa_kernel'; the sam3 submodule likely changed."
+            "Failed because the module no longer exposes 'sdpa_kernel'; the pinned sam3 version likely changed."
         )
         raise AttributeError(msg)
 

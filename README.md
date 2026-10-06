@@ -36,8 +36,8 @@ Update your [NVIDIA driver](https://www.nvidia.com/Download/index.aspx).
    # Navigate to your Griptape Nodes libraries directory
    cd `gtn config show workspace_directory`
 
-   # Clone the library with submodules
-   git clone --recurse-submodules https://github.com/griptape-ai/griptape-nodes-library-sam3.git
+   # Clone the library
+   git clone https://github.com/griptape-ai/griptape-nodes-library-sam3.git
    ```
 
 2. **Add the library** in the Griptape Nodes Editor:
