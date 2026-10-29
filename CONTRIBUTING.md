@@ -68,7 +68,7 @@ Write for the person updating the library: which node changed, what they will no
 
 ## Releases
 
-Library versions follow [semantic versioning](https://semver.org/). The version is stored in the library JSON file under `metadata.library_version`.
+Library versions follow [semantic versioning](https://semver.org/). The version is stored in the library JSON file under `metadata.library_version`, and each bump copies it to `pyproject.toml` and `uv.lock`.
 
 To check the current version:
 
@@ -86,7 +86,7 @@ make version/set v=1.2.3
 
 1. Merge your changes to `main`.
 
-2. Run **Actions > Version Bump (Patch)** or **Actions > Version Bump (Minor)** on `main`. This increments the version in the library JSON, folds the `changelog.d/` entries into a `CHANGELOG.md` section for the new version and deletes them, and commits the change. A bump stops first if `CHANGELOG.md` or `changelog.d/` holds uncommitted changes, since the roll would overwrite them.
+2. Run **Actions > Version Bump (Patch)** or **Actions > Version Bump (Minor)** on `main`. This increments the version in the library JSON, folds the `changelog.d/` entries into a `CHANGELOG.md` section for the new version and deletes them, and commits the change. A bump stops first if the library JSON, `pyproject.toml`, `uv.lock`, `CHANGELOG.md`, or `changelog.d/` holds uncommitted changes, since the bump overwrites and commits those files whole.
 
    Or bump locally and push:
 

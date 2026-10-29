@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 LIBRARY_JSON := griptape_nodes_sam3_library/griptape-nodes-library.json
+VERSIONED_FILES := $(LIBRARY_JSON) pyproject.toml uv.lock CHANGELOG.md changelog.d
 
 .PHONY: version/get
 version/get: ## Get version.
@@ -43,20 +44,22 @@ version/major: changelog/assert-committed ## Bump major version.
 	@make version/commit
 
 .PHONY: version/commit
-version/commit: ## Roll the changelog into the version, then commit both.
+version/commit: ## Copy the version to pyproject.toml, roll the changelog into it, then commit.
+	@uv version --no-sync $$($(MAKE) --no-print-directory version/get)
 	@uv run --no-project python scripts/changelog.py roll $$($(MAKE) --no-print-directory version/get) --allow-empty
-	@git commit -m "chore: bump v$$($(MAKE) --no-print-directory version/get)" -- $(LIBRARY_JSON) CHANGELOG.md changelog.d
+	@git commit -m "chore: bump v$$($(MAKE) --no-print-directory version/get)" -- $(VERSIONED_FILES)
 
 # The roll overwrites CHANGELOG.md and deletes the entry files, and the bump commits whatever it left,
-# so an entry still being written would ship half-finished or be lost. The library JSON is covered too:
-# a bump whose roll failed leaves the new version there, and bumping again from it skips a version.
+# so an entry still being written would ship half-finished or be lost. The version files are covered too:
+# the bump commits them whole, so an unrelated edit would ride along, and a bump whose roll failed leaves
+# the new version there, so bumping again from it skips a version.
 .PHONY: changelog/assert-committed
 changelog/assert-committed:
-	@git diff --quiet HEAD -- $(LIBRARY_JSON) CHANGELOG.md changelog.d \
+	@git diff --quiet HEAD -- $(VERSIONED_FILES) \
 		&& test -z "$$(git ls-files --others --exclude-standard -- changelog.d)" \
-		|| { echo "$(LIBRARY_JSON), CHANGELOG.md, or changelog.d holds changes that are not committed."; \
+		|| { echo "$(VERSIONED_FILES): one of these holds changes that are not committed."; \
 			echo "Commit or stash them first. If a version bump stopped partway, undo it with:"; \
-			echo "  git restore $(LIBRARY_JSON) CHANGELOG.md changelog.d"; exit 1; }
+			echo "  git restore $(VERSIONED_FILES)"; exit 1; }
 
 .PHONY: version/publish
 version/publish: ## Create and push git tags.
