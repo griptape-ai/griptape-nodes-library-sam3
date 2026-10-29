@@ -14,7 +14,7 @@ version/set: changelog/assert-committed ## Set version. Usage: make version/set 
 
 .PHONY: version/patch
 version/patch: changelog/assert-committed ## Bump patch version.
-	@CURRENT=$$(make version/get); \
+	@CURRENT=$$($(MAKE) --no-print-directory version/get); \
 	IFS='.' read -r major minor patch <<< "$$CURRENT"; \
 	NEW_VERSION="$${major}.$${minor}.$$((patch + 1))"; \
 	jq --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
@@ -24,7 +24,7 @@ version/patch: changelog/assert-committed ## Bump patch version.
 
 .PHONY: version/minor
 version/minor: changelog/assert-committed ## Bump minor version.
-	@CURRENT=$$(make version/get); \
+	@CURRENT=$$($(MAKE) --no-print-directory version/get); \
 	IFS='.' read -r major minor patch <<< "$$CURRENT"; \
 	NEW_VERSION="$${major}.$$((minor + 1)).0"; \
 	jq --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
@@ -34,7 +34,7 @@ version/minor: changelog/assert-committed ## Bump minor version.
 
 .PHONY: version/major
 version/major: changelog/assert-committed ## Bump major version.
-	@CURRENT=$$(make version/get); \
+	@CURRENT=$$($(MAKE) --no-print-directory version/get); \
 	IFS='.' read -r major minor patch <<< "$$CURRENT"; \
 	NEW_VERSION="$$((major + 1)).0.0"; \
 	jq --arg v "$$NEW_VERSION" '.metadata.library_version = $$v' $(LIBRARY_JSON) > $(LIBRARY_JSON).tmp; \
@@ -61,9 +61,9 @@ changelog/assert-committed:
 .PHONY: version/publish
 version/publish: ## Create and push git tags.
 	@git fetch --tags --force
-	@git tag "v$$(make version/get)"
+	@git tag "v$$($(MAKE) --no-print-directory version/get)"
 	@git tag stable -f
-	@git push origin "v$$(make version/get)"
+	@git push origin "v$$($(MAKE) --no-print-directory version/get)"
 	@git push -f origin stable
 
 .PHONY: deps/sync
