@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 from griptape.artifacts import VideoUrlArtifact
-from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
+from griptape_nodes.exe_types.core_types import NodeError, Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.log_parameter import LogParameter
@@ -212,6 +212,11 @@ class Sam3MultiplexVideo(SuccessFailureNode):
                 self._extract_frames, input_video_artifact, frames_dir
             )
             self.log_params.append_to_logs(f"Extracted {frame_count} frames at {fps:.2f} FPS\n")
+            if frame_count == 0:
+                raise NodeError(
+                    "No frames could be read from the input video. "
+                    "Its codec may not be supported; re-encode it as an H.264 MP4 and try again."
+                )
 
             # Validate prompt_frame
             if prompt_frame >= frame_count:
@@ -251,7 +256,12 @@ class Sam3MultiplexVideo(SuccessFailureNode):
             self.log_params.append_to_logs(f"Total objects to track: {total_objects}\n")
 
             if total_objects == 0:
-                self.log_params.append_to_logs("Warning: No objects found matching any prompts\n")
+                quoted_prompts = ", ".join(f"'{prompt}'" for prompt in text_prompts)
+                raise NodeError(
+                    f"No objects matched {quoted_prompts} on frame {prompt_frame}. "
+                    "Try a simpler noun or a different prompt frame.",
+                    fields={"text_prompts": ", ".join(text_prompts), "prompt_frame": prompt_frame},
+                )
 
             # Propagate through video with Object Multiplex
             self.log_params.append_to_logs("Propagating segmentation through video (Object Multiplex)...\n")
