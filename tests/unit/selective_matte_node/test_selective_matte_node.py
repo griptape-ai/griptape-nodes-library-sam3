@@ -231,7 +231,7 @@ class NodeTests(unittest.TestCase):
         self.assertIsNone(self.node.parameter_output_values["mask"])
         self.assertIs(self.node.parameter_output_values["plate"], self.plate)
         self.node.parameter_output_values["mask"] = Artifact("second-alpha.mp4")
-        self.node.set_parameter_value("quality", "isolated")
+        self.node.set_parameter_value("sam_checkpoint", "other.pt")
         self.assertIsNone(self.node.parameter_output_values["mask"])
 
     def test_ui_setting_invalidates_while_worker_is_publishing(self):
@@ -259,7 +259,7 @@ class NodeTests(unittest.TestCase):
             thread.start()
             try:
                 self.assertTrue(entered.wait(3))
-                self.node.set_parameter_value("quality", "isolated")
+                self.node.set_parameter_value("sam_checkpoint", "other.pt")
                 self.assertTrue(self.node.is_cancellation_requested)
                 self.assertIsNone(self.node.parameter_output_values["mask"])
                 self.assertGreater(self.node._result_revision, previous_revision)
@@ -287,7 +287,6 @@ class NodeTests(unittest.TestCase):
         from selective_matte import alpha_render, backend
 
         self.selection(points=[{"frame": 0, "x": 0.2, "y": 0.3, "label": 1}], pointsRevision=3)
-        self.node.set_parameter_value("pipeline", object())
         self.node.set_parameter_value("operation", "render")
         self.node.set_parameter_value("custom_resize", True)
         preview = self.root / "mask_000000.png"
@@ -317,6 +316,7 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(self.node.parameter_output_values["mask"].value, "combined-alpha.mp4")
         self.assertEqual(self.node.parameter_output_values["plate"].value, "resized-plate.mp4")
         self.assertEqual(render.call_args.kwargs["output_size"], "processing")
+        self.assertIsNone(render.call_args.kwargs["alpha_path"])
         self.assertEqual(render.call_args.kwargs["resize_width"], 960)
         self.assertEqual(render.call_args.kwargs["resize_height"], 540)
         self.node._refresh_source()
@@ -326,11 +326,60 @@ class NodeTests(unittest.TestCase):
         callback(0.4, "test progress")
         self.assertEqual(self.node._widget_state()["progress"], 0.4)
 
+    def test_alpha_change_and_disconnect_invalidate_mask(self):
+        self.node.parameter_output_values["mask"] = Artifact("old-alpha.mp4")
+        self.node._running = True
+        self.node.set_parameter_value("alpha", Artifact("whole.mp4"))
+        self.assertIsNone(self.node.parameter_output_values["mask"])
+        self.assertTrue(self.node.is_cancellation_requested)
+        self.node.parameter_output_values["mask"] = Artifact("second-alpha.mp4")
+        self.node.after_incoming_connection_removed(None, None, self.node.parameters["alpha"])
+        self.assertIsNone(self.node.get_parameter_value("alpha"))
+        self.assertIsNone(self.node.parameter_output_values["mask"])
+
+    def test_empty_alpha_renders_without_it(self):
+        from selective_matte import alpha_render, backend
+
+        self.selection(points=[{"frame": 0, "x": 0.2, "y": 0.3, "label": 1}])
+        self.node.set_parameter_value("alpha", Artifact(""))
+        self.node.set_parameter_value("operation", "render")
+        rendered = {"alpha_video_path": "m.mp4", "plate_video_path": "p.mp4", "preview_mask_path": "f.png"}
+        with (
+            patch.object(backend, "segment", return_value={"mask_sequence_dir": str(self.root), "warnings": []}),
+            patch.object(backend, "unload_model"),
+            patch.object(alpha_render, "render_alpha", return_value=rendered) as render,
+        ):
+            self.node._work()
+        self.assertIsNone(render.call_args.kwargs["alpha_path"])
+
+    def test_render_passes_connected_alpha_video(self):
+        from selective_matte import alpha_render, backend
+
+        self.selection(points=[{"frame": 0, "x": 0.2, "y": 0.3, "label": 1}])
+        whole = self.root / "whole-alpha.mp4"
+        whole.write_bytes(b"alpha")
+        self.node.set_parameter_value("alpha", Artifact(str(whole)))
+        self.node.set_parameter_value("operation", "render")
+        result = {"mask_sequence_dir": str(self.root), "warnings": []}
+        rendered = {
+            "alpha_video_path": "mask.mp4",
+            "plate_video_path": "plate.mp4",
+            "alpha_sequence_dir": "final-png",
+            "preview_mask_path": "final.png",
+        }
+        with (
+            patch.object(backend, "segment", return_value=result),
+            patch.object(backend, "unload_model"),
+            patch.object(alpha_render, "render_alpha", return_value=rendered) as render,
+        ):
+            self.node._work()
+        self.assertEqual(render.call_args.kwargs["alpha_path"], str(whole.resolve()))
+        self.assertEqual(self.node.parameter_output_values["mask"].value, "mask.mp4")
+
     def test_missing_final_video_fails_but_keeps_alpha_sequence(self):
         from selective_matte import alpha_render, backend
 
         self.selection(points=[{"frame": 0, "x": 0.2, "y": 0.3, "label": 1}], pointsRevision=3)
-        self.node.set_parameter_value("pipeline", object())
         self.node.set_parameter_value("operation", "render")
         preview = self.root / "mask_000000.png"
         preview.write_bytes(b"mask")
@@ -370,7 +419,6 @@ class NodeTests(unittest.TestCase):
         from selective_matte import alpha_render, backend
 
         self.selection(points=[{"frame": 0, "x": 0.2, "y": 0.3, "label": 1}])
-        self.node.set_parameter_value("pipeline", object())
         self.node.set_parameter_value("operation", "render")
         result = {"mask_sequence_dir": str(self.root), "warnings": []}
         rendered = {

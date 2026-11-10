@@ -119,19 +119,19 @@ The SAM3.1 Multiplex Video node uses Object Multiplex for ~7x faster multi-objec
 
 ### Selective Matte (Labs)
 
-Click a subject, track it through a video with SAM3.1, and render its matte with LTX Alpha-Gen. Ported from [Griptape Selective Matte](https://github.com/Amaru-Zeas/griptape-nodes-library-selective-matte) by Amaru Zeas-Sigüenza. The click picker is the PointPicker widget from the Griptape Nodes Point Select library, which installs automatically with this library.
+Click a subject, track it through a video with SAM3.1, and render its matte. Ported from [Griptape Selective Matte](https://github.com/Amaru-Zeas/griptape-nodes-library-selective-matte) by Amaru Zeas-Sigüenza. The click picker is the PointPicker widget from the Griptape Nodes Point Select library, which installs automatically with this library.
 
 ```text
 Load Video ─────────────────────→ Source
-LTX Pipeline → Alpha-Gen LoRA ──→ Alpha-Gen Pipeline
+Any whole-frame matte (optional) → Alpha
                                   Selective Matte
                                     Plate ──→ Frame Compare / Plate
                                     Mask ───→ Frame Compare / Mask
 ```
 
-1. Connect a video and an LTX-2.5 Distilled pipeline with the Alpha-Gen IC-LoRA enabled.
+1. Connect a video. Optionally connect a grayscale whole-frame matte of the same clip to **Alpha**, from any matting model (an LTX-2.5 Alpha-Gen render, for example). Its fine edge detail, like hair, is kept inside the selection.
 2. Click the subject; add exclude points on anything it should not include. Points can go on any frame.
-3. **Preview mask** shows SAM3.1's mask on the current frame. **Track subject** propagates it through the clip in both directions. **Render alpha** tracks if needed, refines edges with ViTMatte, and runs Alpha-Gen.
+3. **Preview mask** shows SAM3.1's mask on the current frame. **Track subject** propagates it through the clip in both directions. **Render alpha** tracks if needed, refines edges with ViTMatte, and blends in the connected **Alpha**. Without one, the Mask is the refined selection.
 
 **Plate** is the source resized to the processing resolution shown in the picker header, and **Mask** is the finished alpha video at the same size. **Custom resize** fits the plate inside a smaller box for test renders.
 
@@ -139,9 +139,9 @@ LTX Pipeline → Alpha-Gen LoRA ──→ Alpha-Gen Pipeline
 | --- | --- |
 | Selection and tracking | [SAM3.1](https://huggingface.co/facebook/sam3.1) multiplex checkpoint |
 | Edge refinement | [ViTMatte Base](https://huggingface.co/hustvl/vitmatte-base-composition-1k) |
-| Alpha | [LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5-Diffusers) with the [Alpha-Gen IC-LoRA](https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen), from the connected pipeline |
+| Whole-frame alpha (optional) | Whatever produced the connected **Alpha** video; it needs the Source's framing and frame count |
 
-SAM3.1 runs in this library's execution environment. To use a separate SAM3.1 install instead, set **Processing settings → sam_python** to that environment's Python. SAM is unloaded before LTX runs so the two never share GPU memory.
+SAM3.1 runs in this library's execution environment. To use a separate SAM3.1 install instead, set **Processing settings → sam_python** to that environment's Python. SAM is unloaded before ViTMatte runs so the two never share GPU memory.
 
 `tests/smoke_sam31.py` runs one frame through the real SAM3.1 backend on a GPU (`--help` for arguments).
 

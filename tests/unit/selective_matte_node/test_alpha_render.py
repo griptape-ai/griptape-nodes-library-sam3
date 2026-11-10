@@ -1,7 +1,7 @@
-"""CPU selective-alpha integration tests with injected model runners.
+"""CPU selective-alpha integration tests with an injected refiner.
 
-No diffusion pipeline, matting weights, or GPU inference is loaded. OpenCV is
-used for real blending geometry; native media decoding is tested separately.
+No matting weights or GPU inference are loaded. OpenCV is used for real
+blending geometry; native media decoding is tested separately.
 """
 
 import sys
@@ -23,8 +23,10 @@ class FakeRefiner:
     def __init__(self, result=None):
         self.result = result
         self.closed = False
+        self.calls = []
 
     def __call__(self, rgb, selection):
+        self.calls.append(rgb.copy())
         return selection.copy() if self.result is None else self.result
 
     def close(self):
@@ -37,99 +39,112 @@ class AlphaRenderTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / "source.mp4"
         self.source.write_bytes(b"CPU test input; frames supplied by fake decoder")
+        self.alpha = self.root / "alpha.mp4"
+        self.alpha.write_bytes(b"CPU test whole-frame alpha")
         self.masks = self.root / "selection"
         self.masks.mkdir()
         self.destination = self.root / "output"
         self.destination.mkdir()
         self.width, self.height, self.num_frames = 15, 9, 13
         self.frames = [np.full((self.height, self.width, 3), 90 + i, np.uint8) for i in range(self.num_frames)]
+        self.alpha_frames = [np.full((self.height, self.width, 3), 100 + i, np.uint8) for i in range(self.num_frames)]
+        self.alpha_count = self.num_frames
         for frame in range(self.num_frames):
             Image.fromarray(np.full((self.height, self.width), 255, np.uint8)).save(
                 self.masks / f"mask_{frame:06d}.png"
             )
-        self.model_calls = []
         self.refiner = FakeRefiner()
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def runner(self, pipeline, frames, **kwargs):
-        self.model_calls.append([np.asarray(frame).copy() for frame in frames])
-        # The canvas's center is inside the fitted original; its source color
-        # identifies the original frame, including repeated end padding.
-        return [
-            np.full((32, 32), 0.4 + 0.02 * (int(np.asarray(frame)[16, 16, 0]) - 90), np.float32) for frame in frames
-        ]
+    def media(self, path):
+        count = self.alpha_count if Path(path) == self.alpha else self.num_frames
+        return {"width": self.width, "height": self.height, "fps": 29.97, "num_frames": count, "kind": "video"}
 
-    def render(self, **overrides):
-        media = {
-            "width": self.width,
-            "height": self.height,
-            "fps": 29.97,
-            "num_frames": self.num_frames,
-            "kind": "video",
-        }
+    def decode(self, path):
+        yield from self.alpha_frames if Path(path) == self.alpha else self.frames
+
+    def render(self, encode=("video.webm", None), **overrides):
         args = {
-            "pipeline": object(),
             "source_path": self.source,
             "mask_sequence_dir": self.masks,
             "output_dir": self.destination,
             "canvas_width": 32,
             "canvas_height": 32,
-            "chunk_size": 9,
-            "overlap": 1,
-            "_runner": self.runner,
             "_refiner": self.refiner,
+            "output_size": "original",  # Explicitly exercise legacy restoration separately.
         }
-        args["output_size"] = "original"  # Explicitly exercise legacy restoration separately.
         args.update(overrides)
         with ExitStack() as stack:
-            stack.enter_context(patch.object(preprocessing, "probe_media", return_value=media))
-            stack.enter_context(patch.object(alpha_render, "_frames", side_effect=lambda _: iter(self.frames)))
+            stack.enter_context(patch.object(preprocessing, "probe_media", side_effect=self.media))
+            stack.enter_context(patch.object(alpha_render, "_frames", side_effect=self.decode))
             stack.enter_context(patch.object(backend, "unload_model"))
-            stack.enter_context(
-                patch.object(backend, "_write_preview_video", return_value=(None, "Preview skipped by CPU test"))
-            )
+            if encode is not None:
+                self.encode = stack.enter_context(patch.object(backend, "_write_preview_video", return_value=encode))
             return alpha_render.render_alpha(**args)
+
+    def read_alpha(self, path):
+        with Image.open(path) as image:
+            return np.asarray(image).astype(np.float32) / 65535
 
     def assert_no_published_run(self):
         self.assertEqual(list(self.destination.iterdir()), [], "Failed render left partial output artifacts.")
 
-    def test_canvas_padding_chunk_overlap_and_repeat_are_restored(self):
+    def test_without_alpha_input_mask_is_refined_selection(self):
         result = self.render(selected_frame=7)
         self.assertTrue(self.refiner.closed)
-        self.assertEqual(len(self.model_calls), 2)
-        self.assertEqual([len(call) for call in self.model_calls], [9, 9])
-        # 13 originals => 9-frame call + 5 real overlapping frames + 4 repeats.
-        second = self.model_calls[1]
-        self.assertEqual([int(frame[16, 16, 0]) for frame in second], [98, 99, 100, 101, 102, 102, 102, 102, 102])
-        first = self.model_calls[0][0]
-        self.assertTrue(np.all(first[0] == 0))
-        self.assertTrue(np.all(first[16] == 90))
-        sequence = Path(result["alpha_sequence_dir"])
-        files = sorted(sequence.glob("alpha_*.png"))
+        self.assertEqual(len(self.refiner.calls), 13)
+        # The refiner sees the padded processing canvas.
+        self.assertTrue(np.all(self.refiner.calls[0][0] == 0))
+        self.assertTrue(np.all(self.refiner.calls[0][16] == 90))
+        files = sorted(Path(result["alpha_sequence_dir"]).glob("alpha_*.png"))
         self.assertEqual(len(files), 13)
         self.assertEqual(result["num_frames"], 13)
         self.assertEqual(result["fps"], 29.97)
         self.assertEqual(Path(result["preview_mask_path"]).name, "alpha_000007.png")
-        for frame, file in enumerate(files):
-            with Image.open(file) as image:
-                alpha = np.asarray(image).astype(np.float32) / 65535
-                self.assertEqual(image.size, (self.width, self.height))
-            np.testing.assert_allclose(alpha, 0.4 + 0.02 * frame, atol=2 / 65535)
-        self.assertFalse(list(self.destination.rglob("*.f32")))
+        for file in files:
+            alpha = self.read_alpha(file)
+            self.assertEqual(alpha.shape, (self.height, self.width))
+            np.testing.assert_allclose(alpha, 1, atol=2 / 65535)
+
+    def test_alpha_input_supplies_per_frame_detail(self):
+        result = self.render(alpha_path=self.alpha)
+        for frame, file in enumerate(sorted(Path(result["alpha_sequence_dir"]).glob("alpha_*.png"))):
+            np.testing.assert_allclose(self.read_alpha(file), (100 + frame) / 255, atol=2 / 255)
+
+    def test_alpha_input_at_another_resolution_is_resized_to_source(self):
+        self.alpha_frames = [np.full((18, 30, 3), 120, np.uint8) for _ in range(self.num_frames)]
+        result = self.render(alpha_path=self.alpha)
+        np.testing.assert_allclose(self.read_alpha(result["preview_mask_path"]), 120 / 255, atol=2 / 255)
+
+    def test_alpha_input_with_other_framing_is_refused(self):
+        self.alpha_frames = [np.full((32, 32, 3), 120, np.uint8) for _ in range(self.num_frames)]
+        with self.assertRaisesRegex(ValueError, "framing"):
+            self.render(alpha_path=self.alpha)
+        self.assert_no_published_run()
 
     def test_soft_alpha_is_not_quantized_to_eight_bits(self):
         target = 0.432123
-
-        def runner(pipeline, frames, **kwargs):
-            return [np.full((32, 32), target, np.float32) for _ in frames]
-
-        result = self.render(_runner=runner)
-        with Image.open(result["preview_mask_path"]) as image:
-            sample = int(np.asarray(image)[4, 7])
+        refiner = FakeRefiner(np.full((32, 32), target, np.float32))
+        result = self.render(_refiner=refiner)
+        sample = int(np.asarray(Image.open(result["preview_mask_path"]))[4, 7])
         self.assertLess(abs(sample / 65535 - target), 1 / 65535)
         self.assertNotEqual(sample % 257, 0, "Output was first rounded to eight bits.")
+
+    def test_alpha_frame_count_mismatch_fails_before_outputs(self):
+        self.alpha_count = 12
+        with self.assertRaisesRegex(ValueError, "12 frames.*13"):
+            self.render(alpha_path=self.alpha)
+        self.assertFalse(self.refiner.calls)
+        self.assert_no_published_run()
+
+    def test_short_alpha_decode_fails_without_outputs(self):
+        self.alpha_frames = self.alpha_frames[:5]
+        with self.assertRaisesRegex(ValueError, "ended before the Source"):
+            self.render(alpha_path=self.alpha)
+        self.assertTrue(self.refiner.closed)
+        self.assert_no_published_run()
 
     def test_processing_outputs_crop_padding_without_resizing_back(self):
         result = self.render(output_size="processing")
@@ -144,31 +159,13 @@ class AlphaRenderTests(unittest.TestCase):
         self.frames = [np.full((72, 128, 3), 90 + i, np.uint8) for i in range(self.num_frames)]
         for frame in range(self.num_frames):
             Image.fromarray(np.full((72, 128), 255, np.uint8)).save(self.masks / f"mask_{frame:06d}.png")
-        media = {"width": 128, "height": 72, "fps": 24.0, "num_frames": self.num_frames, "kind": "video"}
-        with (
-            patch.object(preprocessing, "probe_media", return_value=media),
-            patch.object(alpha_render, "_frames", side_effect=lambda _: iter(self.frames)),
-            patch.object(backend, "unload_model"),
-            patch.object(backend, "_write_preview_video", return_value=("video.webm", None)) as encode,
-        ):
-            result = alpha_render.render_alpha(
-                object(),
-                self.source,
-                self.masks,
-                self.destination,
-                canvas_width=1920,
-                canvas_height=1088,
-                resize_width=32,
-                resize_height=32,
-                chunk_size=9,
-                overlap=1,
-                _runner=self.runner,
-                _refiner=self.refiner,
-            )
-        self.assertEqual(self.model_calls[0][0].shape, (32, 32, 3))
+        result = self.render(
+            canvas_width=1920, canvas_height=1088, resize_width=32, resize_height=32, output_size="processing"
+        )
+        self.assertEqual(self.refiner.calls[0].shape, (32, 32, 3))
         self.assertEqual((result["width"], result["height"]), (32, 18))
-        self.assertEqual(len(encode.call_args_list), 2)
-        for call in encode.call_args_list:
+        self.assertEqual(len(self.encode.call_args_list), 2)
+        for call in self.encode.call_args_list:
             self.assertEqual((call.args[2]["width"], call.args[2]["height"]), (32, 18))
         with Image.open(result["preview_mask_path"]) as image:
             self.assertEqual(image.size, (32, 18))
@@ -178,30 +175,7 @@ class AlphaRenderTests(unittest.TestCase):
             import av
         except ImportError:
             self.skipTest("PyAV is required for the actual encoder check")
-        media = {
-            "width": self.width,
-            "height": self.height,
-            "fps": 24.0,
-            "num_frames": self.num_frames,
-            "kind": "video",
-        }
-        with (
-            patch.object(preprocessing, "probe_media", return_value=media),
-            patch.object(alpha_render, "_frames", side_effect=lambda _: iter(self.frames)),
-            patch.object(backend, "unload_model"),
-        ):
-            result = alpha_render.render_alpha(
-                object(),
-                self.source,
-                self.masks,
-                self.destination,
-                canvas_width=32,
-                canvas_height=32,
-                chunk_size=9,
-                overlap=1,
-                _runner=self.runner,
-                _refiner=self.refiner,
-            )
+        result = self.render(encode=None, output_size="processing")
         self.assertEqual(result["warnings"], [])
         for key in ("plate_video_path", "alpha_video_path"):
             self.assertTrue(result[key].endswith(".webm"))  # Exact 32x19, no codec padding.
@@ -209,24 +183,11 @@ class AlphaRenderTests(unittest.TestCase):
                 frames = list(video.decode(video=0))
                 self.assertEqual(len(frames), self.num_frames)
                 self.assertTrue(all((f.width, f.height) == (32, 19) for f in frames))
-                self.assertAlmostEqual(float(frames[-1].time), 12 / 24, places=4)
                 if key == "plate_video_path":
                     # No black padding remains; source progression is preserved.
                     first, last = [f.to_ndarray(format="rgb24") for f in (frames[0], frames[-1])]
                     self.assertGreater(first[0].mean(), 80)
                     self.assertGreater(last.mean(), first.mean() + 8)
-
-    def test_letterbox_bars_are_removed_from_final_alpha(self):
-        def runner(pipeline, frames, **kwargs):
-            alpha = np.zeros((32, 32), np.float32)
-            # 15x9 fitted to 32x32 is 32x19, with six rows above/seven below.
-            alpha[6:25] = 0.6
-            return [alpha.copy() for _ in frames]
-
-        result = self.render(_runner=runner)
-        with Image.open(result["preview_mask_path"]) as image:
-            restored = np.asarray(image).astype(np.float32) / 65535
-        np.testing.assert_allclose(restored, 0.6, atol=1 / 65535)
 
     def test_progress_matches_backend_fraction_message_contract(self):
         seen = []
@@ -245,38 +206,26 @@ class AlphaRenderTests(unittest.TestCase):
         (self.masks / "mask_000004.png").unlink()
         with self.assertRaisesRegex(ValueError, "frame 4.*missing"):
             self.render()
-        self.assertFalse(self.model_calls)
+        self.assertFalse(self.refiner.calls)
         self.assert_no_published_run()
 
     def test_source_mask_shape_mismatch_fails_without_outputs(self):
         Image.fromarray(np.ones((8, 15), np.uint8)).save(self.masks / "mask_000000.png")
         with self.assertRaisesRegex(ValueError, "dimensions do not match"):
             self.render()
-        self.assertFalse(self.model_calls)
         self.assert_no_published_run()
 
-    def test_refined_shape_is_checked_before_ltx(self):
+    def test_refined_shape_is_checked(self):
         wrong = FakeRefiner(np.full((1, 1), 0.5, np.float32))
-        with self.assertRaisesRegex(ValueError, "[Ss]hape|dimensions|[Rr]efined|[Rr]efiner|misaligned"):
+        with self.assertRaisesRegex(ValueError, "misaligned"):
             self.render(_refiner=wrong)
         self.assertTrue(wrong.closed)
-        self.assertFalse(self.model_calls)
         self.assert_no_published_run()
 
     def test_nonfinite_refined_alpha_is_rejected(self):
         wrong = FakeRefiner(np.full((32, 32), np.nan, np.float32))
-        with self.assertRaisesRegex(ValueError, "finite|invalid|[Rr]efined|[Rr]efiner"):
+        with self.assertRaisesRegex(ValueError, "invalid"):
             self.render(_refiner=wrong)
-        self.assertFalse(self.model_calls)
-        self.assert_no_published_run()
-
-    def test_runner_failure_removes_prepared_and_partial_outputs(self):
-        def fail(pipeline, frames, **kwargs):
-            raise RuntimeError("Synthetic inference failure")
-
-        with self.assertRaisesRegex(RuntimeError, "Synthetic inference failure"):
-            self.render(_runner=fail)
-        self.assertTrue(self.refiner.closed)
         self.assert_no_published_run()
 
     def test_refiner_initialization_failure_leaves_no_run(self):
@@ -290,22 +239,6 @@ class AlphaRenderTests(unittest.TestCase):
         cancelled.set()
         with self.assertRaisesRegex((RuntimeError, InterruptedError), "cancelled"):
             self.render(cancel=cancelled)
-        self.assert_no_published_run()
-
-    def test_incomplete_decoded_chunk_is_rejected_without_outputs(self):
-        def short(pipeline, frames, **kwargs):
-            return [np.full((32, 32), 0.5, np.float32)]
-
-        with self.assertRaisesRegex(ValueError, "fewer frames"):
-            self.render(_runner=short)
-        self.assert_no_published_run()
-
-    def test_bad_ltx_shape_is_rejected_without_outputs(self):
-        def wrong(pipeline, frames, **kwargs):
-            return [np.full((31, 32), 0.5, np.float32) for _ in frames]
-
-        with self.assertRaisesRegex(ValueError, "misaligned"):
-            self.render(_runner=wrong)
         self.assert_no_published_run()
 
     def test_touching_opaque_other_subject_is_excluded(self):

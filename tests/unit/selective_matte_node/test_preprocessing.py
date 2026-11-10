@@ -9,7 +9,6 @@ from selective_matte.preprocessing import (
     pad_mask,
     pad_rgb,
     plan_canvas,
-    plan_chunks,
     plan_custom_resize,
     restore_mask,
 )
@@ -71,16 +70,6 @@ class CanvasTests(unittest.TestCase):
         result = restore_mask(canvas, p, output_size="processing")
         self.assertEqual(result.shape, (1080, 1920))
         np.testing.assert_array_equal(result, canvas[4:1084])
-
-    def test_chunk_boundaries_preserve_actual_length(self):
-        for count in [1, 8, 9, 49, 50, 121, 145, 247]:
-            chunks = plan_chunks(count)
-            covered = set()
-            for chunk in chunks:
-                self.assertEqual((chunk.model_frames - 1) % 8, 0)
-                covered.update(range(chunk.start, chunk.start + chunk.valid_frames))
-            self.assertEqual(covered, set(range(count)))
-        self.assertEqual([x.start for x in plan_chunks(121)], [0, 40, 80])
 
 
 if __name__ == "__main__":

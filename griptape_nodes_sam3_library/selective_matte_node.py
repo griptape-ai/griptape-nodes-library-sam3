@@ -1,4 +1,4 @@
-"""Selective Matte: pick a subject with PointPicker, track it with SAM 3.1, and render its alpha with LTX Alpha-Gen.
+"""Selective Matte: pick a subject with PointPicker, track it with SAM 3.1, and render its alpha.
 
 Ported from Amaru Zeas-Sigüenza's Griptape Selective Matte library.
 """
@@ -22,7 +22,6 @@ from griptape_nodes.retained_mode.events.static_file_events import (
     CreateStaticFileDownloadUrlResultSuccess,
 )
 from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
-from griptape_nodes.traits.options import Options
 from griptape_nodes.traits.widget import Widget
 
 # PointPicker comes from the Point Select library, which this library declares as a dependency.
@@ -36,7 +35,7 @@ ACTIONS = [
     {
         "id": "render",
         "label": "Render alpha",
-        "title": "Track, then render the matte with Alpha-Gen",
+        "title": "Track, then render the matte",
         "primary": True,
         "needsInclude": True,
     },
@@ -110,7 +109,7 @@ class SelectiveMatte(ControlNode):
         self._result_revision = 0
         merged = {
             "category": "video/matting",
-            "description": "Select a subject, track with SAM3.1, and render Alpha-Gen.",
+            "description": "Select a subject, track with SAM3.1, and render its matte.",
         }
         merged.update(metadata or {})
         super().__init__(name=name, metadata=merged, **kwargs)
@@ -127,11 +126,13 @@ class SelectiveMatte(ControlNode):
         )
         self.add_parameter(
             Parameter(
-                name="pipeline",
-                type="Pipeline Config",
+                name="alpha",
+                type="VideoUrlArtifact",
+                input_types=["VideoUrlArtifact", "VideoArtifact", "str"],
                 allowed_modes={ParameterMode.INPUT},
-                tooltip="Connect the LoRA Pipeline output from your working LTX-2.5 Alpha-Gen workflow.",
-                ui_options={"display_name": "Alpha-Gen Pipeline", "hide_property": True},
+                tooltip="Optional grayscale whole-frame matte of the Source from any matting model, same framing and frame count. "
+                "Its edge detail is kept inside the selection. Without it, the Mask is the ViTMatte-refined selection.",
+                ui_options={"display_name": "Alpha (optional)", "hide_property": True},
             )
         )
         with ParameterGroup(name="Resize plate", collapsed=False) as resize:
@@ -141,7 +142,7 @@ class SelectiveMatte(ControlNode):
                 default_value=False,
                 allowed_modes={ParameterMode.PROPERTY},
                 ui_options={"display_name": "Custom resize"},
-                tooltip="Resize the source for ViTMatte and LTX. Plate and Mask stay at this size; aspect ratio is preserved.",
+                tooltip="Resize the source for matting. Plate and Mask stay at this size; aspect ratio is preserved.",
             )
             Parameter(
                 name="resize_width",
@@ -179,13 +180,6 @@ class SelectiveMatte(ControlNode):
                 tooltip="Optional local/project path instead of a Source wire.",
             )
             Parameter(
-                name="quality",
-                type="str",
-                default_value="fast",
-                traits={Options(choices=["fast", "isolated"])},
-                tooltip="Fast restricts Alpha-Gen with the selected subject. Isolated prepares only the selected foreground before Alpha-Gen.",
-            )
-            Parameter(
                 name="sam_checkpoint",
                 type="str",
                 default_value="",
@@ -209,11 +203,6 @@ class SelectiveMatte(ControlNode):
                 default_value=1088,
                 tooltip="Processing canvas height when Custom resize is off; padding is removed from final outputs.",
             )
-            Parameter(name="chunk_size", type="int", default_value=49, tooltip="Frames per LTX call (8n+1, 9 to 145).")
-            Parameter(
-                name="overlap", type="int", default_value=9, tooltip="Overlapping frames blended between LTX calls."
-            )
-            Parameter(name="seed", type="int", default_value=42)
             Parameter(
                 name="output_directory",
                 type="str",
@@ -331,14 +320,22 @@ class SelectiveMatte(ControlNode):
         return root
 
     def _source_path(self) -> str:
-        value = self.get_parameter_value("source")
-        reference = source_reference(value) or str(self.get_parameter_value("source_path") or "").strip()
+        reference = str(self.get_parameter_value("source_path") or "").strip()
+        return self._media_path(self.get_parameter_value("source"), reference, "Source")
+
+    @staticmethod
+    def _has_media(value: Any) -> bool:
+        data = value.get("value") if isinstance(value, dict) else getattr(value, "value", None)
+        return bool(source_reference(value)) or isinstance(data, (bytes, bytearray))
+
+    def _media_path(self, value: Any, fallback: str, label: str) -> str:
+        reference = source_reference(value) or fallback
         if reference:
             resolved = File(reference).resolve()
             if not resolved.startswith(("http://", "https://")):
                 path = Path(resolved)
                 if not path.is_file():
-                    raise ValueError(f"Source file not found: {path}")
+                    raise ValueError(f"{label} file not found: {path}")
                 return str(path)
             # Materialize remote artifacts once; source references can still be displayed by the engine.
             data = File(reference).read_bytes()
@@ -346,7 +343,7 @@ class SelectiveMatte(ControlNode):
         else:
             data = value.get("value") if isinstance(value, dict) else getattr(value, "value", None)
             if not isinstance(data, (bytes, bytearray)):
-                raise ValueError("Connect a video or supply a Source path.")
+                raise ValueError(f"Connect a video or supply a {label} path.")
             suffix = "." + str(getattr(value, "format", "mp4")).lstrip(".")
         name = hashlib.sha256(data).hexdigest()[:20] + suffix
         path = self._output_root() / "sources" / name
@@ -470,7 +467,7 @@ class SelectiveMatte(ControlNode):
                         self._push(error=str(exc), busy=False, status="Could not start operation.")
                     finally:
                         self._dispatching = False
-        elif parameter.name in ("pipeline", "quality", "sam_checkpoint", "sam_python", "chunk_size", "overlap", "seed"):
+        elif parameter.name in ("alpha", "sam_checkpoint", "sam_python"):
             self._invalidate_final()
             if self._running:
                 self.request_cancellation()
@@ -481,8 +478,8 @@ class SelectiveMatte(ControlNode):
     ) -> None:
         if target_parameter.name == "source":
             self.set_parameter_value("source", None)
-        elif target_parameter.name == "pipeline":
-            self.set_parameter_value("pipeline", None)
+        elif target_parameter.name == "alpha":
+            self.set_parameter_value("alpha", None)
         return super().after_incoming_connection_removed(source_node, source_parameter, target_parameter)
 
     def _progress(self, value: float, message: str) -> None:
@@ -517,8 +514,6 @@ class SelectiveMatte(ControlNode):
             points = state.get("points", [])
             if not isinstance(points, list) or not points:
                 raise ValueError("Add an include point on the subject first.")
-            if action == "render" and self.get_parameter_value("pipeline") is None:
-                raise ValueError("Connect the LoRA Pipeline output from your existing Alpha-Gen workflow.")
             checkpoint = str(self.get_parameter_value("sam_checkpoint") or "").strip()
             if checkpoint:
                 checkpoint = File(checkpoint).resolve()
@@ -575,17 +570,14 @@ class SelectiveMatte(ControlNode):
                 self._invalidate_final()
                 render_revision = self._result_revision
                 settings_revision = int(self._widget_state().get("settingsRevision", 0))
+                alpha = self.get_parameter_value("alpha")
                 rendered: dict[str, Any] = render_alpha(
-                    self.get_parameter_value("pipeline"),
                     path,
                     result["mask_sequence_dir"],
                     str(workdir / "alpha"),
+                    alpha_path=self._media_path(alpha, "", "Alpha") if self._has_media(alpha) else None,
                     canvas_width=int(self.get_parameter_value("canvas_width") or 1920),
                     canvas_height=int(self.get_parameter_value("canvas_height") or 1088),
-                    chunk_size=int(self.get_parameter_value("chunk_size") or 49),
-                    overlap=int(self.get_parameter_value("overlap") or 9),
-                    seed=int(self.get_parameter_value("seed") or 0),
-                    quality=str(self.get_parameter_value("quality") or "fast"),
                     output_size="processing",
                     resize_width=self.get_parameter_value("resize_width")
                     if self.get_parameter_value("custom_resize")
@@ -596,7 +588,6 @@ class SelectiveMatte(ControlNode):
                     selected_frame=int(state.get("frame", 0)),
                     progress=self._progress,
                     cancel=lambda: self.is_cancellation_requested,
-                    node_name=self.name,
                 )
                 if self.is_cancellation_requested:
                     raise InterruptedError("Operation cancelled.")

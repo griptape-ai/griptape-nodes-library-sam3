@@ -127,7 +127,7 @@
             "file_path": "selective_matte_node.py",
             "metadata": {
                 "category": "video/matting",
-                "description": "Click a subject, track it through a video with SAM 3.1, and render its matte with an LTX Alpha-Gen pipeline. Outputs a Plate and Mask at processing resolution.",
+                "description": "Click a subject, track it through a video with SAM 3.1, and render its matte, optionally blending in a whole-frame alpha from any matting model. Outputs a Plate and Mask at processing resolution.",
                 "display_name": "Selective Matte"
             }
         }

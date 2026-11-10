@@ -1,8 +1,7 @@
-"""Independent selective-alpha orchestration for the existing GT LTX pipeline.
+"""Selective-alpha rendering from SAM selections, ViTMatte edges and an optional whole-frame alpha.
 
-RGB and masks travel through one reversible canvas transform. SAM is never
-misrepresented as an Alpha-Gen input mask: selection happens in the final blend,
-or by removing competing foreground from a second RGB reference pass.
+RGB and masks travel through one reversible canvas transform. The whole-frame
+alpha can come from any matting model; selection happens in the final blend.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from .preprocessing import pad_mask, pad_rgb, plan_canvas, plan_chunks, plan_custom_resize, restore_mask
+from .preprocessing import pad_mask, pad_rgb, plan_canvas, plan_custom_resize, restore_mask
 
 
 def _cancel(cancel):
@@ -34,7 +33,7 @@ def _frames(path):
         pass
     reader = cv2.VideoCapture(str(path))
     if not reader.isOpened():
-        raise ValueError("Could not open the source clip for Alpha-Gen.")
+        raise ValueError(f"Could not open {Path(path).name} for alpha rendering.")
     try:
         while True:
             ok, frame = reader.read()
@@ -46,7 +45,7 @@ def _frames(path):
 
 
 class ViTMatteRefiner:
-    """Small lazy model with an explicit release before the large LTX pass."""
+    """Small lazy model, released before the node returns."""
 
     def __init__(self, model_id="hustvl/vitmatte-base-composition-1k", erode=10, dilate=20):
         import torch
@@ -96,10 +95,10 @@ class ViTMatteRefiner:
 
 
 def blend_selected(full_alpha, selection, refined, *, reach=48, contact_radius=16):
-    """Keep LTX detail within an expanded selection; use refined contact edges.
+    """Keep whole-frame alpha detail within an expanded selection; use refined contact edges.
 
     A hard SAM multiplication clips flyaway hair. Instead a soft outer envelope
-    leaves room for LTX detail, while high-opacity competing foreground identifies
+    leaves room for that detail, while high-opacity competing foreground identifies
     boundaries where a whole-frame alpha cannot distinguish the selected object.
     """
     import cv2
@@ -115,13 +114,13 @@ def blend_selected(full_alpha, selection, refined, *, reach=48, contact_radius=1
     # A whole-frame opaque region immediately outside the selection is ambiguous:
     # it may be an adjacent subject. Consult the trimap-derived matte there, not
     # a wide dilated SAM gate (which would retain a strip of the neighbour).
-    # Soft LTX strands remain eligible outside the SAM outline.
+    # Soft strands remain eligible outside the SAM outline.
     other = ((alpha > 0.95) & (outside_distance > 1)).astype(np.uint8)
     if other.any():
         distance_to_other = cv2.distanceTransform(1 - other, cv2.DIST_L2, 5)
         contact = np.clip(1 - distance_to_other / max(1, contact_radius * 2), 0, 1)
         candidate = candidate * (1 - contact) + refined * contact
-    # Fall back per connected selected component when Alpha-Gen omits an object.
+    # Fall back per connected selected component when the whole-frame alpha omits an object.
     count, labels = cv2.connectedComponents(s)
     for label in range(1, count):
         component = labels == label
@@ -131,66 +130,35 @@ def blend_selected(full_alpha, selection, refined, *, reach=48, contact_radius=1
     return np.clip(candidate, 0, 1)
 
 
-def _isolated_rgb(rgb, full_alpha, selection):
-    """Remove competing opaque foreground using surrounding RGB background."""
-    import cv2
-    import numpy as np
-
-    target = (selection > 0.5).astype(np.uint8)
-    safe_target = cv2.dilate(target, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (41, 41)))
-    remove = ((full_alpha > 0.7) & (safe_target == 0)).astype(np.uint8)
-    remove = cv2.dilate(remove, np.ones((7, 7), np.uint8)) * (1 - safe_target)
-    if not remove.any():
-        return rgb
-    return cv2.inpaint(rgb, remove * 255, 5, cv2.INPAINT_TELEA)
-
-
-def _chunk_weights(chunk, index, chunks, overlap):
-    import numpy as np
-
-    weight = np.ones(chunk.valid_frames, np.float32)
-    if index:
-        n = min(overlap, chunk.valid_frames)
-        weight[:n] *= np.linspace(1 / (n + 1), n / (n + 1), n)
-    if index < len(chunks) - 1:
-        n = min(overlap, chunk.valid_frames)
-        weight[-n:] *= np.linspace(n / (n + 1), 1 / (n + 1), n)
-    return weight
-
-
 def _as_alpha(frame, width, height):
+    """Whole-frame alpha from a decoded RGB frame, at the source's dimensions."""
     import numpy as np
+
+    from .preprocessing import _resize
 
     a = np.asarray(frame)
-    if a.shape[:2] != (height, width):
-        raise ValueError(f"LTX decoded {a.shape[:2]}, expected {(height, width)}; refusing misaligned alpha.")
-    if np.issubdtype(a.dtype, np.integer):
-        a = a.astype(np.float32) / np.iinfo(a.dtype).max
-    else:
-        a = a.astype(np.float32)
+    a = a.astype(np.float32) / np.iinfo(a.dtype).max if np.issubdtype(a.dtype, np.integer) else a.astype(np.float32)
     if a.ndim == 3:
         a = a[..., :3].mean(-1)
     if a.ndim != 2 or not np.isfinite(a).all():
-        raise ValueError("LTX produced an invalid alpha frame.")
-    return np.clip(a, 0, 1)
+        raise ValueError("The connected Alpha video has an invalid frame.")
+    if abs(a.shape[1] / a.shape[0] - width / height) > 0.01 * width / height:
+        raise ValueError(
+            f"The Alpha video is {a.shape[1]}×{a.shape[0]}, which doesn't match the Source's {width}×{height} framing."
+        )
+    return np.clip(_resize(a, (width, height)), 0, 1)
 
 
 def render_alpha(
-    pipeline,
     source_path,
     mask_sequence_dir,
     output_dir,
+    alpha_path=None,
     canvas_width=1920,
     canvas_height=1088,
-    chunk_size=49,
-    overlap=9,
-    seed=42,
     progress=None,
     cancel=None,
-    node_name=None,
-    quality="fast",
     selected_frame=0,
-    _runner=None,
     _refiner=None,
     output_size="processing",
     resize_width=None,
@@ -200,21 +168,14 @@ def render_alpha(
     run = root / ("alpha_" + uuid.uuid4().hex[:12])
     try:
         return _render_alpha_impl(
-            pipeline,
             source_path,
             mask_sequence_dir,
-            output_dir,
+            alpha_path,
             canvas_width,
             canvas_height,
-            chunk_size,
-            overlap,
-            seed,
             progress,
             cancel,
-            node_name,
-            quality,
             selected_frame,
-            _runner,
             _refiner,
             _run_dir=run,
             output_size=output_size,
@@ -230,21 +191,14 @@ def render_alpha(
 
 
 def _render_alpha_impl(
-    pipeline,
     source_path,
     mask_sequence_dir,
-    output_dir,
+    alpha_path=None,
     canvas_width=1920,
     canvas_height=1088,
-    chunk_size=49,
-    overlap=9,
-    seed=42,
     progress=None,
     cancel=None,
-    node_name=None,
-    quality="fast",
     selected_frame=0,
-    _runner=None,
     _refiner=None,
     _run_dir=None,
     output_size="processing",
@@ -253,6 +207,8 @@ def _render_alpha_impl(
 ):
     """Track first, then render matching Plate/Mask at the unpadded processing size.
 
+    Without ``alpha_path`` the matte is the ViTMatte-refined selection. With it,
+    each frame of that whole-frame alpha is blended into the selection.
     The review MP4 is a proxy. The 16-bit PNG sequence is the authoritative alpha.
     No source images or flow files are overwritten.
     """
@@ -262,14 +218,14 @@ def _render_alpha_impl(
     from .backend import _write_preview_video, unload_model
     from .preprocessing import probe_media
 
-    if quality not in ("fast", "isolated"):
-        raise ValueError("Alpha quality must be 'fast' or 'isolated'.")
     if output_size not in ("original", "processing"):
         raise ValueError("Output size must be original or processing.")
-    if pipeline is None:
-        raise ValueError("Connect the LoRA Pipeline output from your Alpha-Gen workflow to Pipeline.")
     media = probe_media(str(source_path))
     n = media["num_frames"]
+    if alpha_path is not None:
+        alpha_frames = probe_media(str(alpha_path))["num_frames"]
+        if alpha_frames != n:
+            raise ValueError(f"The Alpha video has {alpha_frames} frames; the Source has {n}.")
     if resize_width is not None or resize_height is not None:
         plan = plan_custom_resize(media["width"], media["height"], resize_width, resize_height)
     else:
@@ -277,19 +233,19 @@ def _render_alpha_impl(
     output_media = dict(media)
     if output_size == "processing":
         output_media.update(width=plan.content_width, height=plan.content_height)
-    chunks = plan_chunks(n, chunk_size, overlap)
     masks = Path(mask_sequence_dir)
     for frame in range(n):
         if not (masks / f"mask_{frame:06d}.png").is_file():
             raise ValueError(f"Selection mask for source frame {frame} is missing. Track the complete clip first.")
     _cancel(cancel)
     run = Path(_run_dir)
-    prepared, refined_dir, alpha_dir = run / "prepared", run / "refined", run / "alpha"
-    for folder in (prepared, refined_dir, alpha_dir):
+    prepared, alpha_dir = run / "prepared", run / "alpha"
+    for folder in (prepared, alpha_dir):
         folder.mkdir(parents=True, exist_ok=False)
     notify = lambda message, fraction: progress(fraction, message) if progress else None  # noqa: E731
-    unload_model()  # SAM and LTX must not occupy GPU memory concurrently.
+    unload_model()  # SAM and ViTMatte must not occupy GPU memory concurrently.
     refiner = _refiner or ViTMatteRefiner()
+    whole = _frames(str(alpha_path)) if alpha_path is not None else None
     try:
         count = 0
         for frame, rgb in enumerate(_frames(str(source_path))):
@@ -300,101 +256,34 @@ def _render_alpha_impl(
                 selection = np.asarray(im.convert("L"), dtype=np.float32) / 255
             if selection.shape != rgb.shape[:2]:
                 raise ValueError("SAM mask and original plate dimensions do not match.")
-            # Run the matting model at the same processing scale used by LTX.
+            # Run the matting model at the processing scale.
             rgb_canvas, selection_canvas = pad_rgb(rgb, plan), pad_mask(selection, plan)
             refined = np.asarray(refiner(rgb_canvas, selection_canvas), dtype=np.float32)
             if refined.shape != (plan.height, plan.width) or not np.isfinite(refined).all():
                 raise ValueError("ViTMatte returned an invalid or misaligned alpha frame.")
             refined = np.clip(refined, 0, 1)
+            if whole is not None:
+                whole_frame = next(whole, None)
+                if whole_frame is None:
+                    raise ValueError("The Alpha video ended before the Source.")
+                full = pad_mask(_as_alpha(whole_frame, plan.original_width, plan.original_height), plan)
+                selected = blend_selected(full, selection_canvas, refined)
+            else:
+                selected = refined
             Image.fromarray(rgb_canvas).save(prepared / f"rgb_{frame:06d}.png")
-            Image.fromarray((refined * 65535).round().astype(np.uint16)).save(refined_dir / f"refined_{frame:06d}.png")
+            original = restore_mask(selected, plan, output_size=output_size)
+            Image.fromarray((original * 65535).round().astype(np.uint16)).save(alpha_dir / f"alpha_{frame:06d}.png")
             count += 1
-            notify(f"Refining selection {frame + 1}/{n}", 0.2 * count / n)
+            notify(f"Rendering alpha {frame + 1}/{n}", 0.9 * count / n)
         if count != n:
             raise ValueError(f"Source decoded {count} frames; expected {n}. No partial matte was published.")
     finally:
+        if whole is not None:
+            whole.close()
         if hasattr(refiner, "close"):
             refiner.close()
         del refiner
         gc.collect()
-    if _runner is None:
-        from .ltx_runner import run_alpha as _runner
-    accumulator_path = run / "alpha_accumulator.f32"
-    acc = np.memmap(accumulator_path, mode="w+", dtype=np.float32, shape=(n, plan.height, plan.width))
-    acc[:] = 0
-    weights = np.zeros(n, np.float32)
-    try:
-        for chunk_index, chunk in enumerate(chunks):
-            _cancel(cancel)
-            input_frames = []
-            selections = []
-            for frame in range(chunk.start, chunk.start + chunk.valid_frames):
-                with Image.open(prepared / f"rgb_{frame:06d}.png") as im:
-                    input_frames.append(im.convert("RGB").copy())
-                with Image.open(masks / f"mask_{frame:06d}.png") as im:
-                    selections.append(pad_mask(np.asarray(im.convert("L"), np.float32) / 255, plan))
-            input_frames += [input_frames[-1]] * (chunk.model_frames - chunk.valid_frames)
-            notify(f"LTX Alpha-Gen chunk {chunk_index + 1}/{len(chunks)}", 0.2 + 0.65 * chunk_index / len(chunks))
-            pass_fraction = 0.5 if quality == "isolated" else 1
-            chunk_progress = lambda fraction, message: notify(  # noqa: E731
-                message,
-                0.2 + 0.65 * (chunk_index + pass_fraction * fraction) / len(chunks),  # noqa: B023
-            )
-            outputs = _runner(
-                pipeline, input_frames, seed=seed, steps=8, node_name=node_name, cancel=cancel, progress=chunk_progress
-            )
-            if len(outputs) < chunk.valid_frames:
-                raise ValueError("LTX returned fewer frames than the source chunk.")
-            full = [_as_alpha(f, plan.width, plan.height) for f in outputs[: chunk.valid_frames]]
-            if quality == "isolated":
-                isolated = [
-                    Image.fromarray(_isolated_rgb(np.asarray(input_frames[k]), full[k], selections[k]))
-                    for k in range(chunk.valid_frames)
-                ]
-                isolated += [isolated[-1]] * (chunk.model_frames - chunk.valid_frames)
-                notify(
-                    f"LTX isolated-subject pass {chunk_index + 1}/{len(chunks)}", 0.2 + 0.65 * chunk_index / len(chunks)
-                )
-                second_progress = lambda fraction, message: notify(  # noqa: E731
-                    message,
-                    0.2 + 0.65 * (chunk_index + 0.5 + 0.5 * fraction) / len(chunks),  # noqa: B023
-                )
-                second = _runner(
-                    pipeline, isolated, seed=seed, steps=8, node_name=node_name, cancel=cancel, progress=second_progress
-                )
-                if len(second) < chunk.valid_frames:
-                    raise ValueError("LTX isolated pass returned an incomplete chunk.")
-                detail = [_as_alpha(f, plan.width, plan.height) for f in second[: chunk.valid_frames]]
-            else:
-                detail = full
-            temporal_weights = _chunk_weights(chunk, chunk_index, chunks, overlap)
-            for k in range(chunk.valid_frames):
-                frame = chunk.start + k
-                with Image.open(refined_dir / f"refined_{frame:06d}.png") as im:
-                    refined = np.asarray(im, np.float32) / 65535
-                # Retain the original whole-frame contact boundary information in
-                # both modes; the isolated pass supplies background-facing detail.
-                selected = blend_selected(detail[k], selections[k], refined)
-                if quality == "isolated":
-                    full_selected = blend_selected(full[k], selections[k], refined)
-                    # Respect a refined boundary wherever another opaque object
-                    # makes the full pass ambiguous; otherwise use isolated detail.
-                    contact = np.clip(np.abs(full_selected - full[k]) * selections[k], 0, 1)
-                    selected = selected * (1 - contact) + full_selected * contact
-                acc[frame] += selected * temporal_weights[k]
-                weights[frame] += temporal_weights[k]
-            del input_frames, outputs, full, detail, selections
-        if np.any(weights <= 0):
-            raise RuntimeError("An internal chunk gap was detected; no mask was published.")
-        for frame in range(n):
-            _cancel(cancel)
-            original = restore_mask(np.asarray(acc[frame]) / weights[frame], plan, output_size=output_size)
-            Image.fromarray((original * 65535).round().astype(np.uint16)).save(alpha_dir / f"alpha_{frame:06d}.png")
-            notify(f"Writing output framing {frame + 1}/{n}", 0.85 + 0.1 * (frame + 1) / n)
-    finally:
-        acc.flush()
-        del acc
-        accumulator_path.unlink(missing_ok=True)
     # Encode a review proxy without confusing it with the 16-bit final deliverable.
     proxy_dir = run / "review_masks"
     proxy_dir.mkdir()
@@ -434,7 +323,6 @@ def _render_alpha_impl(
         selected_frame=selected_frame,
         canvas_plan=plan.to_dict(),
         warnings=warnings,
-        quality=quality,
         **output_media,
     )
     (run / "manifest.json").write_text(
@@ -442,12 +330,11 @@ def _render_alpha_impl(
             dict(
                 result,
                 source_path=str(source_path),
+                whole_frame_alpha_path=str(alpha_path) if alpha_path is not None else None,
                 alpha_pattern="alpha/alpha_%06d.png",
                 alpha_bit_depth=16,
                 frame_index_base=0,
-                model="LTX-2.5 Alpha-Gen + SAM 3.1 + ViTMatte",
-                seed=seed,
-                chunks=[vars(c) for c in chunks],
+                model="SAM 3.1 + ViTMatte" + (" + connected whole-frame alpha" if alpha_path is not None else ""),
             ),
             indent=2,
         ),

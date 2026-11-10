@@ -513,7 +513,7 @@ class SAM31Backend:
             self._predictor = self._model_key = None
             self._media_cache.clear()
             # Returning allocated model tensors is not enough when a separate
-            # LTX process needs the device: also release our CUDA allocator pool.
+            # model needs the device: also release our CUDA allocator pool.
             if self._factory is _build_predictor:
                 import gc
                 import sys

@@ -1,4 +1,4 @@
-"""Reversible LTX canvas preparation. No model, engine or GPU imports."""
+"""Reversible processing-canvas preparation. No model, engine or GPU imports."""
 
 from __future__ import annotations
 
@@ -49,9 +49,9 @@ def plan_canvas(
     if any(isinstance(v, bool) or not isinstance(v, int) or v <= 0 for v in values):
         raise ValueError("Source and canvas dimensions must be positive integers.")
     if canvas_width % 32 or canvas_height % 32:
-        raise ValueError("LTX canvas width and height must be divisible by 32.")
+        raise ValueError("Canvas width and height must be divisible by 32.")
     if canvas_width > 1920 or canvas_height > 1088:
-        raise ValueError("This Alpha-Gen profile supports a canvas up to 1920 × 1088.")
+        raise ValueError("The processing canvas can be at most 1920 × 1088.")
     scale = min(canvas_width / original_width, canvas_height / original_height)
     w = min(canvas_width, max(1, math.floor(original_width * scale + 0.5)))
     h = min(canvas_height, max(1, math.floor(original_height * scale + 0.5)))
@@ -128,7 +128,7 @@ def restore_mask(mask: Any, plan: CanvasPlan, *, output_size: str = "original") 
 
     a = np.asarray(mask)
     if a.shape[:2] != (plan.height, plan.width):
-        raise ValueError("Rendered alpha dimensions do not match the LTX canvas.")
+        raise ValueError("Rendered alpha dimensions do not match the processing canvas.")
     cropped = a[plan.pad_top : plan.pad_top + plan.content_height, plan.pad_left : plan.pad_left + plan.content_width]
     if output_size not in ("original", "processing"):
         raise ValueError("Output size must be original or processing.")
@@ -136,30 +136,6 @@ def restore_mask(mask: Any, plan: CanvasPlan, *, output_size: str = "original") 
         _resize(cropped, (plan.original_width, plan.original_height)) if output_size == "original" else cropped.copy()
     )
     return np.clip(restored, 0, 1) if np.issubdtype(restored.dtype, np.floating) else restored
-
-
-@dataclass(frozen=True)
-class Chunk:
-    start: int
-    valid_frames: int
-    model_frames: int
-
-
-def plan_chunks(num_frames: int, chunk_size: int = 49, overlap: int = 9) -> list[Chunk]:
-    """LTX's temporal lattice is 8n+1. Repeat end frames only inside each model call."""
-    if num_frames < 1 or chunk_size < 9 or chunk_size > 145 or (chunk_size - 1) % 8:
-        raise ValueError("Use at least one source frame and an LTX chunk of 9–145 frames (8n+1).")
-    if overlap < 1 or overlap >= chunk_size or (chunk_size - overlap) % 8:
-        raise ValueError("Chunk overlap must leave a positive step divisible by 8 (49/9 is recommended).")
-    result = []
-    start = 0
-    while True:
-        valid = min(chunk_size, num_frames - start)
-        result.append(Chunk(start, valid, chunk_size))
-        if start + valid >= num_frames:
-            break
-        start += chunk_size - overlap
-    return result
 
 
 def find_ffmpeg(explicit: str | None = None, *, probe: bool = False) -> str:
@@ -245,41 +221,3 @@ def probe_media(path: str) -> dict[str, Any]:
         "num_frames": int(count),
         "kind": "video",
     }
-
-
-def prepare_video(source: str, output_path: str, plan: CanvasPlan) -> str:
-    """Lossless FFV1 intermediate; no crop, frame-rate conversion or audio synthesis."""
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    filters = (
-        f"scale={plan.content_width}:{plan.content_height}:flags=lanczos,"
-        f"pad={plan.width}:{plan.height}:{plan.pad_left}:{plan.pad_top}:color=black,setsar=1"
-    )
-    command = [
-        find_ffmpeg(),
-        "-v",
-        "error",
-        "-nostdin",
-        "-y",
-        "-i",
-        source,
-        "-map",
-        "0:v:0",
-        "-vf",
-        filters,
-        "-an",
-        "-fps_mode",
-        "passthrough",
-        "-c:v",
-        "ffv1",
-        "-level",
-        "3",
-        "-pix_fmt",
-        "bgr0",
-        output_path,
-    ]
-    result = subprocess.run(
-        command, capture_output=True, text=True, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    )
-    if result.returncode:
-        raise RuntimeError("LTX canvas preparation failed: " + result.stderr[-1500:])
-    return output_path
