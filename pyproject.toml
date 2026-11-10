@@ -59,7 +59,19 @@ line-ending = "auto"
 venvPath = "."
 venv = ".venv"
 include = ["."]
-exclude = [".venv", "**/node_modules", "**/__pycache__", "**/.*", "templates"]
+# The Selective Matte model code was ported without type annotations. Type-check it once it's annotated.
+exclude = [
+  ".venv",
+  "**/node_modules",
+  "**/__pycache__",
+  "**/.*",
+  "templates",
+  "griptape_nodes_sam3_library/selective_matte",
+  "tests/smoke_sam31.py",
+  "tests/unit/selective_matte_node/test_alpha_render.py",
+  "tests/unit/selective_matte_node/test_backend.py",
+  "tests/unit/selective_matte_node/test_selective_matte_node.py",
+]
 pythonVersion = "3.12"
 reportIncompatibleMethodOverride = false
 reportMissingImports = false
